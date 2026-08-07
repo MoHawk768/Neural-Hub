@@ -1,0 +1,44 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+
+# Rider
+.idea/
+
+# ReSharper
+_ReSharper*/
+*.DotSettings.user
+
+# NuGet
+packages/
+*.nupkg
+
+# Logs
+*.log
+
+# Temp
+Temp/
+tmp/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# BepInEx
+BepInEx/cache/
+BepInEx/LogOutput.log
+
+# Unity
+Library/
+Logs/
+MemoryCaptures/
+
+# OS
+.DS_Store
