@@ -1,0 +1,13 @@
+* text=auto
+
+*.cs text diff=csharp
+*.csproj text
+*.sln text
+*.json text
+*.xml text
+*.md text
+
+*.dll binary
+*.png binary
+*.jpg binary
+*.asset binary

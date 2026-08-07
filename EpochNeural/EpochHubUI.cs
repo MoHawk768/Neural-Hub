@@ -1,182 +1,136 @@
-﻿// ============================================================
-// Project : Epoch Neural
-// Module  : Epoch Hub
-// File    : EpochHubUI.cs
-//
-// Author  : Otto
-// Version : Sprint 2.0
-//
-// Build Status:
-// 🟢 Active Development
-//
-// Purpose:
-// Manages the Epoch Hub user interface.
-//
-// Responsibilities:
-// • Hub window detection
-// • UI creation
-// • UI refresh
-// • UI cleanup
-//
-// Does NOT own:
-// • Hub registration
-// • Inventory data
-// • Inventory rendering
-// • Progression
-// ============================================================
-
-using HarmonyLib;
+﻿using HarmonyLib;
 using SpaceCraft;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace EpochNeural
 {
-    // ============================================================
-    // Epoch Hub UI
-    //
-    // Manages the Epoch Hub interface.
-    // ============================================================
-
-    internal static class EpochHubUI
+    [HarmonyPatch(typeof(UiWindowContainer))]
+    internal static class EpochUI
     {
-        // ============================================================
-        // Configuration
-        //
-        // Hub UI configuration.
-        // ============================================================
-
-        private const int HubInventorySize = 240;
-
-        // ============================================================
-        // Runtime State
-        //
-        // Shared Hub UI objects.
-        // ============================================================
-
-        private static bool IsInitialized;
-
-        private static GameObject HubPanel;
-
-        // ============================================================
-        // Initialization
-        //
-        // Initializes the Hub UI.
-        // ============================================================
-
-        // ============================================================
-        // Initialize
-        // ============================================================
-
-        internal static void Initialize()
+        [HarmonyPatch("SetInventories")]
+        [HarmonyPostfix]
+        private static void PostfixOpen(Inventory inventoryLeft, Inventory inventoryRight)
         {
-            if (IsInitialized)
+            if (inventoryRight == null || inventoryRight.GetSize() != EpochNeural.HubInventorySize)
                 return;
 
-            EpochNeural.Log(
-                "Hub",
-                "Initializing Hub UI...");
+            EpochNeural.PlayerInventory = inventoryLeft;
+            EpochNeural.EpochHubInventory = inventoryRight;
 
-            IsInitialized = true;
+            Plugin.Logger.LogInfo("[UI] Epoch Hub open session initialized successfully.");
         }
 
-        // ============================================================
-        // Create Hub UI
-        // ============================================================
-
-        private static void CreateHubUI()
+        [HarmonyPatch("OnClose")]
+        [HarmonyPostfix]
+        private static void PostfixClose()
         {
-            EpochNeural.Log(
-                "Hub",
-                "Creating Hub UI...");
+            EpochNeural.PlayerInventory = null;
+            EpochNeural.EpochHubInventory = null;
+
+            Plugin.Logger.LogInfo($"After Clear -> Player={(EpochNeural.PlayerInventory == null)}, Hub={(EpochNeural.EpochHubInventory == null)}");
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryDisplayer), "TrueRefreshContent")]
+    internal static class EpochGridFormatter
+    {
+        private const int TotalColumns = 8;
+
+        private static void Dump(Transform t, int depth)
+        {
+            Plugin.Logger.LogInfo($"{new string(' ', depth * 2)}{t.name}");
+
+            for (int i = 0; i < t.childCount; i++)
+                Dump(t.GetChild(i), depth + 1);
         }
 
-        // ============================================================
-        // Refresh Hub UI
-        // ============================================================
-
-        private static void RefreshHubUI()
+        [HarmonyPostfix]
+        private static void PostfixLayout(InventoryDisplayer __instance)
         {
-            EpochNeural.Log(
-                "Hub",
-                "Refreshing Hub UI...");
-        }
+            if (EpochNeural.EpochHubInventory == null)
+                return;
 
-        // ============================================================
-        // Cleanup Hub UI
-        // ============================================================
+            GridLayoutGroup grid = __instance.GetComponentInChildren<GridLayoutGroup>(true);
 
-        private static void CleanupHubUI()
-        {
-            EpochNeural.Log(
-                "Hub",
-                "Cleaning up Hub UI.");
+            if (grid == null || grid.transform.childCount < 200)
+                return;
 
-            if (HubPanel != null)
+            Plugin.Logger.LogInfo("===== INVENTORY HIERARCHY =====");
+            Dump(__instance.transform, 0);
+            Plugin.Logger.LogInfo("===============================");
+
+            ContentSizeFitter fitter = __instance.GetComponent<ContentSizeFitter>();
+            if (fitter != null)
+                fitter.enabled = false;
+
+            ContentSizeFitter gridFitter = grid.GetComponent<ContentSizeFitter>();
+            if (gridFitter != null)
+                gridFitter.enabled = false;
+
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = TotalColumns;
+
+            const float cell = 76f;
+            const float spacing = 3f;
+
+            grid.cellSize = new Vector2(cell, cell);
+            grid.spacing = new Vector2(spacing, spacing);
+            grid.childAlignment = TextAnchor.UpperLeft;
+
+            RectTransform gridRect = grid.GetComponent<RectTransform>();
+
+            if (gridRect != null)
             {
-                Object.Destroy(
-                    HubPanel);
+                gridRect.anchorMin = new Vector2(0.5f, 1f);
+                gridRect.anchorMax = new Vector2(0.5f, 1f);
+                gridRect.pivot = new Vector2(0.5f, 1f);
 
-                HubPanel = null;
+                int rows = Mathf.CeilToInt((float)grid.transform.childCount / TotalColumns);
+
+                float height =
+                    rows * cell +
+                    (rows - 1) * spacing +
+                    20f;
+
+                gridRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 630f);
+                gridRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+                gridRect.anchoredPosition = Vector2.zero;
             }
 
-            EpochNeural.EpochHubWindow = null;
-        }
+            RectTransform displayerRect = __instance.GetComponent<RectTransform>();
 
-        // ============================================================
-        // Hub Window Detection
-        // ============================================================
-
-        [HarmonyPatch(typeof(UiWindowContainer), "SetInventories")]
-        internal static class HubWindowPatch
-        {
-            [HarmonyPostfix]
-            private static void Postfix(
-                UiWindowContainer __instance,
-                Inventory inventoryLeft,
-                Inventory inventoryRight)
+            if (displayerRect != null)
             {
-                if (inventoryRight == null)
-                    return;
+                displayerRect.anchorMin = new Vector2(0.5f, 0.5f);
+                displayerRect.anchorMax = new Vector2(0.5f, 0.5f);
+                displayerRect.pivot = new Vector2(0.5f, 0.5f);
 
-                if (inventoryRight.GetSize() != HubInventorySize)
-                    return;
+                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 650f);
+                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 650f);
 
-                EpochNeural.Log(
-                    "Hub",
-                    "Epoch Hub opened.");
-
-                EpochNeural.EpochHubWindow =
-                    __instance;
-
-                EpochNeural.PlayerInventory =
-                    inventoryLeft;
-
-                EpochNeural.EpochHubInventory =
-                    inventoryRight;
-
-                CreateHubUI();
-
-                RefreshHubUI();
+                displayerRect.anchoredPosition =
+                    new Vector2(displayerRect.anchoredPosition.x, -40f);
             }
-        }
 
-        // ============================================================
-        // Hub Window Close Detection
-        // ============================================================
+            ScrollRect scroll = __instance.GetComponent<ScrollRect>();
 
-        [HarmonyPatch(typeof(UiWindowContainer), "OnClose")]
-        internal static class HubWindowClosePatch
-        {
-            [HarmonyPostfix]
-            private static void Postfix()
+            if (scroll == null)
             {
-                CleanupHubUI();
-            }
-        }
+                Plugin.Logger.LogInfo($"Displayer Object : {__instance.gameObject.name}");
+                Plugin.Logger.LogInfo($"Grid Parent      : {grid.transform.parent.name}");
 
-        // ============================================================
-        // Private Helpers
-        // ============================================================
+                scroll = __instance.gameObject.AddComponent<ScrollRect>();
+
+                scroll.horizontal = false;
+                scroll.vertical = true;
+                scroll.scrollSensitivity = 45f;
+                scroll.content = gridRect;
+
+                Plugin.Logger.LogInfo("[UI] Scrolling engine re-engaged smoothly.");
+            }
+
+            scroll.verticalNormalizedPosition = 1f;
+        }
     }
 }

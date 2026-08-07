@@ -1,6 +1,7 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
+using System;
 
 namespace EpochNeural
 {
@@ -9,7 +10,7 @@ namespace EpochNeural
     {
         public const string PluginGUID = "com.epoch.neuralcratesystem";
         public const string PluginName = "Epoch Neural Crate System";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "2.0.0";
 
         internal static new ManualLogSource Logger;
 
@@ -18,23 +19,19 @@ namespace EpochNeural
             Logger = base.Logger;
 
             Logger.LogInfo("==================================================");
-            Logger.LogInfo("Epoch Neural Crate System");
-            Logger.LogInfo($"Version {PluginVersion}");
-            Logger.LogInfo("Boot sequence started.");
+            Logger.LogInfo($"{PluginName} v{PluginVersion}");
+            Logger.LogInfo("Clean framework active. Booting core systems...");
             Logger.LogInfo("==================================================");
 
             try
             {
                 Harmony harmony = new Harmony(PluginGUID);
-
                 harmony.PatchAll();
-
-                Logger.LogInfo("[Epoch] Harmony patches applied.");
-                Logger.LogInfo("[Epoch] Boot sequence complete.");
+                Logger.LogInfo("[Epoch] All unified patches initialized successfully.");
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                Logger.LogError("[Epoch] Boot sequence failed.");
+                Logger.LogError("[Epoch] Core boot sequence hit a critical fault:");
                 Logger.LogError(ex);
             }
         }
