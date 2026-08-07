@@ -28,18 +28,15 @@ namespace EpochNeural
         [HarmonyPostfix]
         private static void Postfix()
         {
+            if (IsInitialized)
+                return;
+
             try
             {
-                // Always register after every LoadStaticData()
+                Plugin.Logger.LogInfo("[Epoch] Initializing Central Core...");
                 RegisterEpochHub();
-
-                // One-time initialization only
-                if (!IsInitialized)
-                {
-                    Plugin.Logger.LogInfo("[Epoch] Initializing Central Core...");
-                    RegisterLocalization();
-                    IsInitialized = true;
-                }
+                RegisterLocalization();
+                IsInitialized = true;
             }
             catch (Exception ex)
             {
@@ -77,17 +74,23 @@ namespace EpochNeural
             hubData.secondaryInventoriesSize = new List<int> { 240, 240, 240, 240, 240, 240, 240, 240 };
             hubData.unlockingWorldUnit = DataConfig.WorldUnitType.Terraformation;
             hubData.unlockingValue = 0f;
+
+            // FIX A: Set this back to false so the text engine maps your titles and unlocks your building clicks!
             hubData.hideInCrafter = false;
 
             GroupConstructible epochHub = new GroupConstructible(hubData) { id = HubId };
-            epochHub.SetRecipe(new Recipe(new List<GroupDataItem>()));
+
+            // FIX B: Instantiate an actual recipe container but provide it with a completely blank list.
+            // This safely satisfies the build menu layout engine checks while keeping construction 100% free!
+            List<GroupDataItem> freeIngredientsList = new List<GroupDataItem>();
+            epochHub.SetRecipe(new Recipe(freeIngredientsList));
 
             // Your compiler backing fields setter logic
             try { GroupBackingIdField?.SetValue(epochHub, HubId); } catch { }
 
             groups.Add(epochHub);
             GroupsHandler.SetAllGroups(groups);
-            Plugin.Logger.LogInfo("[Epoch] Epoch Hub data registered securely.");
+            Plugin.Logger.LogInfo("[Epoch] Epoch Hub data registered securely as a zero-cost build asset.");
         }
 
         private static void RegisterLocalization()
