@@ -96,12 +96,12 @@ namespace EpochNeural
                 displayerRect.anchorMax = new Vector2(0.5f, 0.5f);
                 displayerRect.pivot = new Vector2(0.5f, 0.5f);
 
-                // Fix: Changed vertical height to 815f to move the bottom line down and show all 10 rows uncut!
+                // FIX: Expanded height from 815f to 860f to add 45px of space to the window bounds
                 displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 650f);
-                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 815f);
+                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 860f);
 
-                // Center position balanced to line up row 1 with your backpack panel
-                displayerRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, -125f);
+                // FIX: Offset position to -77.5f so the window grows downwards only, keeping the top locked in place
+                displayerRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, -77.5f);
             }
 
             // --- SECTION E: CLEAN NATIVE SCROLL ENGINE INJECTION ---
@@ -158,8 +158,8 @@ namespace EpochNeural
                     buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
                     buttonRect.pivot = new Vector2(0.5f, 0.5f);
 
-                    // Pins buttons firmly in position right above your container rows
-                    buttonRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, displayerRect.anchoredPosition.y + 392f);
+                    // FIX: Adjusted offset to +414.5f to keep buttons perfectly stationary relative to screen space
+                    buttonRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, displayerRect.anchoredPosition.y + 414.5f);
                     LayoutRebuilder.ForceRebuildLayoutImmediate(buttonRect);
                 }
             }
