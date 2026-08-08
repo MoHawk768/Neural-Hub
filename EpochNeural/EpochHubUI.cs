@@ -96,12 +96,12 @@ namespace EpochNeural
                 displayerRect.anchorMax = new Vector2(0.5f, 0.5f);
                 displayerRect.pivot = new Vector2(0.5f, 0.5f);
 
-                // FIX: Expanded height from 815f to 860f to add 45px of space to the window bounds
+                // FIX: Expanded height to 850f to properly bring row 10 slots fully into view
                 displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 650f);
-                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 860f);
+                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 850f);
 
-                // FIX: Offset position to -77.5f so the window grows downwards only, keeping the top locked in place
-                displayerRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, -77.5f);
+                // FIX: Adjusted position to -72.5f to anchor the top position exactly where it belongs
+                displayerRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, -72.5f);
             }
 
             // --- SECTION E: CLEAN NATIVE SCROLL ENGINE INJECTION ---
@@ -158,8 +158,8 @@ namespace EpochNeural
                     buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
                     buttonRect.pivot = new Vector2(0.5f, 0.5f);
 
-                    // FIX: Adjusted offset to +414.5f to keep buttons perfectly stationary relative to screen space
-                    buttonRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, displayerRect.anchoredPosition.y + 414.5f);
+                    // FIX: Adjusted offset to +409.5f to match the new window center position and keep buttons perfectly stationary
+                    buttonRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, displayerRect.anchoredPosition.y + 409.5f);
                     LayoutRebuilder.ForceRebuildLayoutImmediate(buttonRect);
                 }
             }
