@@ -1,4 +1,4 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using SpaceCraft;
 using UnityEngine;
 using UnityEngine.UI;
@@ -33,37 +33,22 @@ namespace EpochNeural
         }
     }
 
-    // 2. Main Layout Formatter: Handles grid alignment, 10 visible rows sizing, and safe inner masking
+    // 2. Main Layout Formatter: Handles stable grid alignment, 10 uncut visible rows, and scroll boundaries
     [HarmonyPatch(typeof(InventoryDisplayer), "TrueRefreshContent")]
     internal static class EpochGridFormatter
     {
         private const int TotalColumns = 8;
 
-        private static void Dump(Transform t, int depth)
-        {
-            Plugin.Logger.LogInfo($"{new string(' ', depth * 2)}{t.name}");
-
-            for (int i = 0; i < t.childCount; i++)
-                Dump(t.GetChild(i), depth + 1);
-        }
-
         [HarmonyPostfix]
         private static void PostfixLayout(InventoryDisplayer __instance)
         {
-            // CRITICAL FIX: Direct session verification filter.
-            // If the player isn't inside our custom chest session, STOP immediately.
-            // This prevents the code from executing inside building menus and crashing your game thread!
+            // Security filter to ensure our mod code only triggers inside our custom storage chest session
             if (EpochNeural.EpochHubInventory == null)
                 return;
 
             GridLayoutGroup grid = __instance.GetComponentInChildren<GridLayoutGroup>(true);
-
             if (grid == null || grid.transform.childCount < 200)
                 return;
-
-            Plugin.Logger.LogInfo("===== INVENTORY HIERARCHY =====");
-            Dump(__instance.transform, 0);
-            Plugin.Logger.LogInfo("===============================");
 
             // --- SECTION A: BYPASS AUTOMATIC WINDOW STRETCHING ---
             ContentSizeFitter fitter = __instance.GetComponent<ContentSizeFitter>();
@@ -83,17 +68,20 @@ namespace EpochNeural
             grid.spacing = new Vector2(spacing, spacing);
             grid.childAlignment = TextAnchor.UpperLeft;
 
+            // Shift top item row down natively by 65px so it clears the title header panel zone completely
+            grid.padding = new RectOffset(0, 0, 65, 0);
+
             // --- SECTION C: CALIBRATE INTERNAL ITEM CONTENT BOUNDS ---
             RectTransform gridRect = grid.GetComponent<RectTransform>();
-
             if (gridRect != null)
             {
+                // Fix: Anchor content tightly to the top-center so scroll physics track boundaries correctly
                 gridRect.anchorMin = new Vector2(0.5f, 1f);
                 gridRect.anchorMax = new Vector2(0.5f, 1f);
                 gridRect.pivot = new Vector2(0.5f, 1f);
 
                 int rows = Mathf.CeilToInt((float)grid.transform.childCount / TotalColumns);
-                float totalGridContentHeight = rows * cell + (rows - 1) * spacing + 20f;
+                float totalGridContentHeight = (rows * cell) + ((rows - 1) * spacing) + 85f;
 
                 gridRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 630f);
                 gridRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, totalGridContentHeight);
@@ -102,47 +90,79 @@ namespace EpochNeural
 
             // --- SECTION D: ALIGN MASTER CONTAINER WINDOW TO BACKPACK BACKDROP ---
             RectTransform displayerRect = __instance.GetComponent<RectTransform>();
-
             if (displayerRect != null)
             {
                 displayerRect.anchorMin = new Vector2(0.5f, 0.5f);
                 displayerRect.anchorMax = new Vector2(0.5f, 0.5f);
                 displayerRect.pivot = new Vector2(0.5f, 0.5f);
 
-                // Final Hair Cut: Lowered height to 790f to clip those last few gray border pixels clean out of frame!
+                // Fix: Changed vertical height to 815f to move the bottom line down and show all 10 rows uncut!
                 displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 650f);
-                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 790f);
+                displayerRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 815f);
 
-
-                // FIXED ALIGNMENT: Lowers the window coordinates symmetrically to line up with the backpack
-                displayerRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, -120f);
+                // Center position balanced to line up row 1 with your backpack panel
+                displayerRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, -125f);
             }
 
-            // --- SECTION E: INNER MASK & SCROLL ENGINE SEPARATION ---
-            ScrollRect scroll = __instance.GetComponent<ScrollRect>();
-
-            if (scroll == null)
+            // --- SECTION E: CLEAN NATIVE SCROLL ENGINE INJECTION ---
+            ScrollRect scrollSystem = __instance.GetComponent<ScrollRect>();
+            if (scrollSystem == null)
             {
-                Plugin.Logger.LogInfo($"Displayer Object : {__instance.gameObject.name}");
-                Plugin.Logger.LogInfo($"Grid Parent      : {grid.transform.parent.name}");
-
-                Transform innerGridContainerTransform = grid.transform.parent;
-                if (innerGridContainerTransform != null)
+                // Inject masking to hide overflow items cleanly at the bottom window borders
+                RectMask2D mask = __instance.gameObject.GetComponent<RectMask2D>();
+                if (mask == null)
                 {
-                    innerGridContainerTransform.gameObject.AddComponent<RectMask2D>();
+                    mask = __instance.gameObject.AddComponent<RectMask2D>();
                 }
 
-                scroll = __instance.gameObject.AddComponent<ScrollRect>();
+                // Trims clipping bounds by 65px at the top so items hide safely beneath your buttons
+                mask.padding = new Vector4(0f, 0f, 0f, 65f);
 
-                scroll.horizontal = false;
-                scroll.vertical = true;
-                scroll.scrollSensitivity = 45f;
-                scroll.content = gridRect;
+                scrollSystem = __instance.gameObject.AddComponent<ScrollRect>();
+                scrollSystem.horizontal = false;
+                scrollSystem.vertical = true;
+                scrollSystem.scrollSensitivity = 45f;
+                scrollSystem.content = gridRect;
 
-                Plugin.Logger.LogInfo("[UI] Dynamic scroll engine and isolated inner component mask successfully established.");
+                // Fix: Set scroll movement boundaries to standard Clamped constraints so it cannot overshoot or fly away
+                scrollSystem.movementType = ScrollRect.MovementType.Clamped;
+                scrollSystem.inertia = false;
+
+                // Snap view directly up to row number 1 upon first opening
+                scrollSystem.verticalNormalizedPosition = 1f;
+
+                Plugin.Logger.LogInfo("[UI] Bound-locked scroll engine attached safely.");
             }
 
-            scroll.verticalNormalizedPosition = 1f;
+            if (scrollSystem != null && scrollSystem.content != gridRect)
+            {
+                scrollSystem.content = gridRect;
+            }
+
+            // --- SECTION F: BUTTONS HIERARCHY RE-PARENTING ---
+            Transform iconsContainer = __instance.transform.Find("IconsContainer");
+            Transform masterParentWindow = __instance.transform.parent;
+
+            if (iconsContainer != null && masterParentWindow != null)
+            {
+                // Safely re-parent the buttons up one level to the main window container background
+                if (iconsContainer.parent != masterParentWindow)
+                {
+                    iconsContainer.SetParent(masterParentWindow, true);
+                }
+
+                RectTransform buttonRect = iconsContainer.GetComponent<RectTransform>();
+                if (buttonRect != null)
+                {
+                    buttonRect.anchorMin = new Vector2(0.5f, 0.5f);
+                    buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
+                    buttonRect.pivot = new Vector2(0.5f, 0.5f);
+
+                    // Pins buttons firmly in position right above your container rows
+                    buttonRect.anchoredPosition = new Vector2(displayerRect.anchoredPosition.x, displayerRect.anchoredPosition.y + 392f);
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(buttonRect);
+                }
+            }
         }
     }
 }
