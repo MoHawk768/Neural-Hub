@@ -34,25 +34,27 @@ namespace EpochNeural
         }
     }
 
-    // --- CHATGPT'S COMPLETE AUTHORITATIVE INVENTORY SCROLLER COMPONENT ---
-    // Zero dependencies on Unity's layout math bounds. Captures raw scroll input delta 
-    // and forcefully maintains the grid position over native engine resets inside LateUpdate.
+    // --- CHATGPT'S AUTHORITATIVE BACKEND-DRIVEN SCROLLER ENGINE ---
+    // Reads raw database lists directly. Ignores all complex UI rendering cycles,
+    // layout components, and timing race conditions, enforcing absolute LateUpdate position locking.
     internal class DirectInventoryScroller : MonoBehaviour, IScrollHandler
     {
         public RectTransform Content;
         public float ScrollSpeed = 45f;
-        public float MaxScroll = 1602f; // Deterministic static boundary limit: 2452f - 850f
+        public float MaxScroll = 1602f; // Math: 2452f content height - 850f viewport height
 
         public static float SavedY = 0f;
+        private float _lastScrollTime = 0f;
 
         public void OnScroll(PointerEventData eventData)
         {
             float y = SavedY;
 
-            // Unity mouse wheel down scroll delta values read as negative numbers natively
+            // Unity mouse wheel scroll down ticks read as negative values natively
             y -= eventData.scrollDelta.y * ScrollSpeed;
             y = Mathf.Clamp(y, 0f, MaxScroll);
 
+            _lastScrollTime = Time.time;
             SavedY = y;
 
             if (Content != null)
@@ -62,24 +64,77 @@ namespace EpochNeural
                 Content.anchoredPosition = p;
             }
         }
-
-        // ChatGPT Epsilon Guard: Constantly checks and forces the position back to SavedY
-        // right before drawing, winning complete architectural ownership over the game's loop.
         void LateUpdate()
         {
             if (Content == null)
                 return;
 
+            // Step 1: Force authoritative position locking to completely crush game-loop resets
             Vector2 p = Content.anchoredPosition;
-
             if (Mathf.Abs(p.y - SavedY) > 0.01f)
             {
                 p.y = SavedY;
                 Content.anchoredPosition = p;
             }
+
+            // Step 2: Handle intelligent snap-back auto-return after input cooldown settles
+            if (Time.time - _lastScrollTime > 0.15f)
+            {
+                int highestFilledIndex = -1;
+
+                // AUTHORITATIVE DATABASE FIX: Scan the game's actual live database list directly
+                if (EpochNeural.EpochHubInventory != null)
+                {
+                    var items = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
+                    if (items != null)
+                    {
+                        int limit = Mathf.Min(items.Count - 1, Content.childCount - 1);
+                        for (int i = limit; i >= 0; i--)
+                        {
+                            if (items[i] != null)
+                            {
+                                highestFilledIndex = i;
+                                goto FOUND_POPULATED_SLOT;
+                            }
+                        }
+                    }
+                }
+
+            FOUND_POPULATED_SLOT:;
+
+                // Exact math constants kept unchanged to preserve your perfect alignment sizing rules
+                const int TotalColumnsLocal = 8;
+                const float cell = 76f;
+                const float spacing = 3f;
+                const int visibleRows = 10; // First 10 rows visible = 80 slots
+
+                float trueTarget = 0f;
+                if (highestFilledIndex >= 0)
+                {
+                    int rowsFilled = Mathf.FloorToInt((float)highestFilledIndex / TotalColumnsLocal) + 1;
+                    if (rowsFilled > visibleRows)
+                    {
+                        int extraRows = rowsFilled - visibleRows;
+                        trueTarget = extraRows * (cell + spacing);
+                        trueTarget = Mathf.Clamp(trueTarget, 0f, MaxScroll);
+                    }
+                    else
+                    {
+                        trueTarget = 0f;
+                    }
+                }
+
+                // If the player tries to sit in empty space, pull them cleanly back to the last active row
+                if (SavedY > trueTarget + 0.01f)
+                {
+                    SavedY = trueTarget;
+                    Vector2 np = Content.anchoredPosition;
+                    np.y = SavedY;
+                    Content.anchoredPosition = np;
+                }
+            }
         }
     }
-
     // 2. Main Layout Formatter: Handles stable grid alignment and 10 uncut visible rows
     [HarmonyPatch(typeof(InventoryDisplayer), "TrueRefreshContent")]
     internal static class EpochGridFormatter
@@ -152,11 +207,11 @@ namespace EpochNeural
             }
 
             // --- SECTION E: FLIPPED DETERMINISTIC INPUT SCROLLER INJECTION ---
-            // 1. Completely strip and disable native ScrollRect component functionality
-            ScrollRect sr = __instance.GetComponent<ScrollRect>();
-            if (sr != null)
+            // 1. Completely disable the native game ScrollRect component so it never alters positions
+            ScrollRect nativeScroll = __instance.GetComponent<ScrollRect>();
+            if (nativeScroll != null)
             {
-                sr.enabled = false;
+                nativeScroll.enabled = false;
             }
 
             // 2. Ensure layout clipping mask remains active to hide overflow items below window border
