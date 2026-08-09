@@ -75,6 +75,52 @@ namespace EpochNeural
             hubData.unlockingWorldUnit = DataConfig.WorldUnitType.Terraformation;
             hubData.unlockingValue = 0f;
 
+            // Your custom item identity adjustments
+            hubData.id = HubId;
+            hubData.name = "Epoch Hub";
+            hubData.inventorySize = HubInventorySize;
+            hubData.secondaryInventoriesSize = new List<int> { 240, 240, 240, 240, 240, 240, 240, 240 };
+            hubData.unlockingWorldUnit = DataConfig.WorldUnitType.Terraformation;
+            hubData.unlockingValue = 0f;
+
+            // ==================================================================
+            // --- LOGISTICAL INFRASTRUCTURE PLACEMENT ESCALATION ---
+            // Loops through the cloned GroupData fields to identify placement rules.
+            // Dynamically overrides constraints to match full external buildings.
+            // ==================================================================
+            foreach (FieldInfo field in typeof(GroupDataConstructible).GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy))
+            {
+                if (field.FieldType == typeof(string) && field.Name.Contains("Constraint"))
+                {
+                    try { field.SetValue(hubData, ""); } catch { }
+                }
+
+                if (field.FieldType.IsEnum && (field.Name.Contains("Place") || field.Name.Contains("Constraint") || field.Name.Contains("Type")))
+                {
+                    try
+                    {
+                        // Escalate the asset's placement profile to behave like a primary external machine/building
+                        object buildingEnumValue = Enum.Parse(field.FieldType, "AsBuilding", true);
+                        if (buildingEnumValue != null)
+                        {
+                            field.SetValue(hubData, buildingEnumValue);
+                            Plugin.Logger.LogInfo("[Epoch Core] Placement type escalated to global building parameters successfully.");
+                        }
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            // Secondary fallback profile value matching rule for alternative game assembly setups
+                            object fallbackValue = Enum.Parse(field.FieldType, "Outside", true);
+                            if (fallbackValue != null) field.SetValue(hubData, fallbackValue);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            // ==================================================================
+
             // FIX A: Set this back to false so the text engine maps your titles and unlocks your building clicks!
             hubData.hideInCrafter = false;
 
@@ -88,10 +134,12 @@ namespace EpochNeural
             // Your compiler backing fields setter logic
             try { GroupBackingIdField?.SetValue(epochHub, HubId); } catch { }
 
+            // Clean, original data registration routing
             groups.Add(epochHub);
             GroupsHandler.SetAllGroups(groups);
             Plugin.Logger.LogInfo("[Epoch] Epoch Hub data registered securely as a zero-cost build asset.");
         }
+
 
         private static void RegisterLocalization()
         {

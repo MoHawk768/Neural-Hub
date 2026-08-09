@@ -10,9 +10,11 @@ namespace EpochNeural
     [HarmonyPatch(typeof(UiWindowContainer))]
     internal static class EpochUI
     {
+        private static Canvas _rootCanvas;
+
         [HarmonyPatch("SetInventories")]
         [HarmonyPostfix]
-        private static void PostfixOpen(Inventory inventoryLeft, Inventory inventoryRight)
+        private static void PostfixOpen(UiWindowContainer __instance, Inventory inventoryLeft, Inventory inventoryRight)
         {
             if (inventoryRight == null || inventoryRight.GetSize() != EpochNeural.HubInventorySize)
                 return;
@@ -20,19 +22,41 @@ namespace EpochNeural
             EpochNeural.PlayerInventory = inventoryLeft;
             EpochNeural.EpochHubInventory = inventoryRight;
 
+            // CANVAS VEIL GATE: Grab the main root canvas component of the entire window container
+            _rootCanvas = __instance.GetComponent<Canvas>() ?? __instance.GetComponentInParent<Canvas>();
+            if (_rootCanvas != null)
+            {
+                // Disable the canvas renderer entirely on Frame 0 to prevent the single-frame layout flash from displaying
+                _rootCanvas.enabled = false;
+            }
+
             Plugin.Logger.LogInfo("[UI] Epoch Hub open session initialized successfully.");
         }
 
-        [HarmonyPatch("OnClose")]
-        [HarmonyPostfix]
-        private static void PostfixClose()
+        // Lift the master canvas veil gate smoothly once everything has finished positioning
+        internal static void LiftMasterCanvasVeil(MonoBehaviour runner)
         {
-            EpochNeural.PlayerInventory = null;
-            EpochNeural.EpochHubInventory = null;
+            if (_rootCanvas != null && !_rootCanvas.enabled && runner != null)
+            {
+                // COROUTINE STALL FIX: Route the activation through a one-frame wait step to fully pass the layout pass
+                runner.StartCoroutine(StalledRevealCoroutine());
+            }
+        }
 
-            Plugin.Logger.LogInfo($"After Clear -> Player={(EpochNeural.PlayerInventory == null)}, Hub={(EpochNeural.EpochHubInventory == null)}");
+        private static System.Collections.IEnumerator StalledRevealCoroutine()
+        {
+            // Force the engine to finish the current frame's drawing calculation loops entirely
+            yield return new WaitForEndOfFrame();
+
+            if (_rootCanvas != null)
+            {
+                _rootCanvas.enabled = true; // Turn the graphics back on cleanly at full scale
+                _rootCanvas = null;
+            }
         }
     }
+
+
 
     // Lightweight runtime relay that forwards OnScroll events from child visuals up to the parent DirectInventoryScroller.
     internal class ScrollRelay : MonoBehaviour, IScrollHandler
