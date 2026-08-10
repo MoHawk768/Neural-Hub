@@ -28,14 +28,13 @@ namespace EpochNeural
         [HarmonyPostfix]
         private static void Postfix()
         {
-            if (IsInitialized)
-                return;
-
             try
             {
                 Plugin.Logger.LogInfo("[Epoch] Initializing Central Core...");
+
                 RegisterEpochHub();
                 RegisterLocalization();
+
                 IsInitialized = true;
             }
             catch (Exception ex)
@@ -66,14 +65,6 @@ namespace EpochNeural
             {
                 try { field.SetValue(hubData, field.GetValue(containerData)); } catch { }
             }
-
-            // Your custom item identity adjustments
-            hubData.id = HubId;
-            hubData.name = "Epoch Hub";
-            hubData.inventorySize = HubInventorySize;
-            hubData.secondaryInventoriesSize = new List<int> { 240, 240, 240, 240, 240, 240, 240, 240 };
-            hubData.unlockingWorldUnit = DataConfig.WorldUnitType.Terraformation;
-            hubData.unlockingValue = 0f;
 
             // Your custom item identity adjustments
             hubData.id = HubId;

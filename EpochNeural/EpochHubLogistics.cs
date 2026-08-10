@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Reflection;
 using HarmonyLib;
 using SpaceCraft;
 using UnityEngine;
@@ -23,6 +24,18 @@ namespace EpochNeural
         // Cache to store the results of our stack compression across the frame lifecycle safely
         internal static List<(WorldObject wo, int count, List<WorldObject> items)> ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
 
+        // Reflection cache for InventoryDisplayer._inventory
+        private static FieldInfo _inventoryDisplayerInventoryField;
+
+        static EpochHubLogistics()
+        {
+            try
+            {
+                _inventoryDisplayerInventoryField = typeof(InventoryDisplayer).GetField("_inventory", BindingFlags.Instance | BindingFlags.NonPublic);
+            }
+            catch { }
+        }
+
         // ==================================================================
         // DATA PROCESSING & LOGISTICS LAYER
         // ==================================================================
@@ -33,7 +46,10 @@ namespace EpochNeural
             return wo.GetGroup().GetId();
         }
 
-        private static List<(WorldObject wo, int count, List<WorldObject> items)> BuildCustomStacks(Inventory inventory, IEnumerable<WorldObject> items, int maxStack)
+        private static List<(WorldObject wo, int count, List<WorldObject> items)> BuildCustomStacks(
+    Inventory inventory,
+    IEnumerable<WorldObject> items,
+    int maxStack)
         {
             int id = inventory.GetId();
             if (!_stableGroupOrder.TryGetValue(id, out var value))
@@ -48,40 +64,51 @@ namespace EpochNeural
             foreach (WorldObject item in items)
             {
                 if (item == null) continue;
+
                 string text = StackKey(item);
+
                 if (!dictionary.TryGetValue(text, out var value2))
                 {
-                    value2 = (dictionary[text] = new List<WorldObject>());
+                    value2 = dictionary[text] = new List<WorldObject>();
                     list.Add(text);
                 }
+
                 value2.Add(item);
             }
 
-            int num = ((value.Count > 0) ? value.Values.Max() : (-1));
+            int num = value.Count > 0 ? value.Values.Max() : -1;
             int num2 = num + 1;
+
             List<(string, int)> list3 = new List<(string, int)>(list.Count);
 
             foreach (string item4 in list)
             {
                 int value3;
-                int itemRank = (value.TryGetValue(item4, out value3) ? value3 : num2++);
+                int itemRank = value.TryGetValue(item4, out value3) ? value3 : num2++;
+
                 list3.Add((item4, itemRank));
             }
 
-            list3.Sort(((string key, int rank) a, (string key, int rank) b) => a.rank.CompareTo(b.rank));
+            list3.Sort((a, b) => a.Item2.CompareTo(b.Item2));
 
             var compressedList = new List<(WorldObject, int, List<WorldObject>)>();
+
             Dictionary<string, int> dictionary2 = new Dictionary<string, int>();
 
             foreach (var item5 in list3)
             {
                 string item2 = item5.Item1;
+
                 dictionary2[item2] = _stableGroupOrder[id].Count;
+
                 List<WorldObject> list5 = dictionary[item2];
+
                 for (int num4 = 0; num4 < list5.Count; num4 += maxStack)
                 {
                     int num5 = Math.Min(maxStack, list5.Count - num4);
+
                     List<WorldObject> range = list5.GetRange(num4, num5);
+
                     compressedList.Add((list5[num4], num5, range));
                 }
             }
@@ -98,6 +125,120 @@ namespace EpochNeural
             return compressedList;
         }
 
+        internal static void RefreshCompressedStacks()
+        {
+            if (EpochNeural.EpochHubInventory == null)
+                return;
+
+            var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
+
+            if (rawItems == null)
+                return;
+
+            ActiveFrameCompressedStacks =
+                BuildCustomStacks(
+                    EpochNeural.EpochHubInventory,
+                    rawItems,
+                    StaticStackCap);
+        }
+
+        internal static int GetTotalItemCount()
+        {
+            int total = 0;
+
+            if (ActiveFrameCompressedStacks == null)
+                return 0;
+
+            foreach (var stack in ActiveFrameCompressedStacks)
+            {
+                total += stack.count;
+            }
+
+            return total;
+        }
+
+        internal static int GetResourceCount(string groupId)
+        {
+            if (string.IsNullOrEmpty(groupId))
+                return 0;
+
+            if (ActiveFrameCompressedStacks == null)
+                return 0;
+
+            int total = 0;
+
+            foreach (var stack in ActiveFrameCompressedStacks)
+            {
+                if (stack.wo == null)
+                    continue;
+
+                Group group = stack.wo.GetGroup();
+
+                if (group == null)
+                    continue;
+
+                if (group.GetId() == groupId)
+                    total += stack.count;
+            }
+
+            return total;
+        }
+
+        internal static bool IsResourceSlotFull(string groupId)
+        {
+            if (string.IsNullOrEmpty(groupId))
+                return false;
+
+            if (ActiveFrameCompressedStacks == null)
+                return false;
+
+            foreach (var stack in ActiveFrameCompressedStacks)
+            {
+                if (stack.wo == null)
+                    continue;
+
+                Group group = stack.wo.GetGroup();
+
+                if (group == null)
+                    continue;
+
+                if (group.GetId() != groupId)
+                    continue;
+
+                // This resource already has a full Epoch slot.
+                if (stack.count >= StaticStackCap)
+                    return true;
+            }
+
+            return false;
+        }
+
+        internal static void Reset()
+        {
+            ActiveFrameCompressedStacks.Clear();
+            _stableGroupOrder.Clear();
+        }
+
+        /// <summary>
+        /// Get the inventory from an InventoryDisplayer via reflection
+        /// </summary>
+        private static Inventory GetInventoryFromDisplayer(InventoryDisplayer displayer)
+        {
+            if (displayer == null) return null;
+            if (_inventoryDisplayerInventoryField == null) return null;
+            return _inventoryDisplayerInventoryField.GetValue(displayer) as Inventory;
+        }
+
+        /// <summary>
+        /// Check if the given inventory is our Epoch Hub
+        /// </summary>
+        private static bool IsEpochHubInventory(Inventory inventory)
+        {
+            if (inventory == null) return false;
+            if (EpochNeural.EpochHubInventory == null) return false;
+            return inventory.GetId() == EpochNeural.EpochHubInventory.GetId();
+        }
+
         // ==================================================================
         // HOOKS: PARAMETER INTERCEPTION
         // ==================================================================
@@ -106,11 +247,15 @@ namespace EpochNeural
         [HarmonyPrefix]
         private static bool PrefixSetInventoryBlocks(InventoryDisplayer __instance, ref ReadOnlyCollection<WorldObject> inventoryWorldObjects)
         {
-            if (EpochNeural.EpochHubInventory == null || inventoryWorldObjects == null || inventoryWorldObjects.Count == 0)
+            var inventory = GetInventoryFromDisplayer(__instance);
+            if (!IsEpochHubInventory(inventory))
+                return true;
+
+            if (inventoryWorldObjects == null || inventoryWorldObjects.Count == 0)
                 return true;
 
             var hubItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
-            if (hubItems == null || !hubItems.Contains(inventoryWorldObjects.FirstOrDefault()))
+            if (hubItems == null || hubItems.Count == 0)
                 return true;
 
             var compressed = BuildCustomStacks(EpochNeural.EpochHubInventory, hubItems, StaticStackCap);
@@ -129,7 +274,7 @@ namespace EpochNeural
         [HarmonyPrefix]
         private static bool PrefixIsFull(Inventory __instance, ref bool __result)
         {
-            if (EpochNeural.EpochHubInventory == null || __instance.GetId() != EpochNeural.EpochHubInventory.GetId())
+            if (!IsEpochHubInventory(__instance))
                 return true;
 
             var items = __instance.GetInsideWorldObjects();
@@ -152,14 +297,19 @@ namespace EpochNeural
         [HarmonyPostfix]
         private static void PostfixCacheCounts(InventoryDisplayer __instance)
         {
-            if (EpochNeural.EpochHubInventory == null || __instance.gameObject.GetComponent<DirectInventoryScroller>() == null)
+            var inventory = GetInventoryFromDisplayer(__instance);
+            if (!IsEpochHubInventory(inventory))
+                return;
+
+            if (__instance.gameObject.GetComponent<DirectInventoryScroller>() == null)
                 return;
 
             var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
             if (rawItems == null) return;
 
-            // TYPO FIXED: Cleanly calls GetInsideWorldObjects()
             ActiveFrameCompressedStacks = BuildCustomStacks(EpochNeural.EpochHubInventory, rawItems, StaticStackCap);
+
+            EpochVacuumSystem.LearnFromInventoryContent();
         }
     }
 
@@ -258,10 +408,6 @@ namespace EpochNeural
     [HarmonyPatch]
     internal static class EpochHubScrollerCoordinator
     {
-        /// <summary>
-        /// Automatically hooks after your DirectInventoryScroller.cs runs its viewport stabilizing steps.
-        /// Loops through active slot instances and refreshes the text labels.
-        /// </summary>
         [HarmonyPatch(typeof(DirectInventoryScroller), "LateUpdate")]
         [HarmonyPostfix]
         private static void PostfixLateUpdateSync(DirectInventoryScroller __instance)
@@ -294,9 +440,7 @@ namespace EpochNeural
                 }
             }
 
-            // LIFT MASTER VEIL HOOK: Pass the scroller instance component reference as our coroutine runner
             EpochUI.LiftMasterCanvasVeil(__instance);
-
         }
     }
 }

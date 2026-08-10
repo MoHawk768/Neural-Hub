@@ -81,10 +81,14 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EpochDevHud.cs" />
     <Compile Include="EpochHubLogistics.cs" />
     <Compile Include="EpochHubUI.cs" />
     <Compile Include="EpochHubVisuals.cs" />
     <Compile Include="EpochNeural.cs" />
+    <Compile Include="EpochVacuumDiscovery.cs" />
+    <Compile Include="EpochVacuumRunner.cs" />
+    <Compile Include="EpochVacuumSystem.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <None Include="SpaceCraft\AchievementLocation.cs" />

@@ -22,6 +22,12 @@ namespace EpochNeural
             EpochNeural.PlayerInventory = inventoryLeft;
             EpochNeural.EpochHubInventory = inventoryRight;
 
+            // Initialize vacuum system
+            EpochVacuumSystem.Initialize(inventoryRight);
+
+            // Ensure persistent vacuum runner is running
+            EpochVacuumRunner.StartRunner();
+
             // CANVAS VEIL GATE: Grab the main root canvas component of the entire window container
             _rootCanvas = __instance.GetComponent<Canvas>() ?? __instance.GetComponentInParent<Canvas>();
             if (_rootCanvas != null)
@@ -55,8 +61,6 @@ namespace EpochNeural
             }
         }
     }
-
-
 
     // Lightweight runtime relay that forwards OnScroll events from child visuals up to the parent DirectInventoryScroller.
     internal class ScrollRelay : MonoBehaviour, IScrollHandler
@@ -101,6 +105,7 @@ namespace EpochNeural
                 Content.anchoredPosition = p;
             }
         }
+
         void LateUpdate()
         {
             if (Content == null)
@@ -172,6 +177,7 @@ namespace EpochNeural
             }
         }
     }
+
     // 2. Main Layout Formatter: Handles stable grid alignment and 10 uncut visible rows
     [HarmonyPatch(typeof(InventoryDisplayer), "TrueRefreshContent")]
     internal static class EpochGridFormatter
@@ -280,37 +286,37 @@ namespace EpochNeural
                 gridRect.anchoredPosition = p;
             }
 
-                // 4. Attach lightweight scroll relays to slot visuals so item graphics do not absorb mouse-wheel events.
-                //    We add the relay onto child visuals (icons, nested objects) so OnScroll events will be forwarded
-                //    up to our DirectInventoryScroller component on the parent container.
-                if (gridRect != null)
+            // 4. Attach lightweight scroll relays to slot visuals so item graphics do not absorb mouse-wheel events.
+            //    We add the relay onto child visuals (icons, nested objects) so OnScroll events will be forwarded
+            //    up to our DirectInventoryScroller component on the parent container.
+            if (gridRect != null)
+            {
+                for (int si = 0; si < gridRect.childCount; si++)
                 {
-                    for (int si = 0; si < gridRect.childCount; si++)
+                    var slot = gridRect.GetChild(si);
+                    if (slot == null)
+                        continue;
+
+                    // Attach to the slot root as a fallback
+                    if (slot.GetComponent<ScrollRelay>() == null)
+                        slot.gameObject.AddComponent<ScrollRelay>();
+
+                    // Attach to each direct child visual (icons/rawimages) which commonly capture input
+                    for (int c = 0; c < slot.childCount; c++)
                     {
-                        var slot = gridRect.GetChild(si);
-                        if (slot == null)
+                        var ch = slot.GetChild(c);
+                        if (ch == null)
                             continue;
 
-                        // Attach to the slot root as a fallback
-                        if (slot.GetComponent<ScrollRelay>() == null)
-                            slot.gameObject.AddComponent<ScrollRelay>();
-
-                        // Attach to each direct child visual (icons/rawimages) which commonly capture input
-                        for (int c = 0; c < slot.childCount; c++)
+                        // If the child has an Image/RawImage or nested children (likely item visuals), ensure relay exists
+                        if (ch.GetComponent<Image>() != null || ch.GetComponent<UnityEngine.UI.RawImage>() != null || ch.childCount > 0)
                         {
-                            var ch = slot.GetChild(c);
-                            if (ch == null)
-                                continue;
-
-                            // If the child has an Image/RawImage or nested children (likely item visuals), ensure relay exists
-                            if (ch.GetComponent<Image>() != null || ch.GetComponent<UnityEngine.UI.RawImage>() != null || ch.childCount > 0)
-                            {
-                                if (ch.GetComponent<ScrollRelay>() == null)
-                                    ch.gameObject.AddComponent<ScrollRelay>();
-                            }
+                            if (ch.GetComponent<ScrollRelay>() == null)
+                                ch.gameObject.AddComponent<ScrollRelay>();
                         }
                     }
                 }
+            }
 
             // --- SECTION F: BUTTONS HIERARCHY RE-PARENTING ---
             Transform iconsContainer = __instance.transform.Find("IconsContainer");
