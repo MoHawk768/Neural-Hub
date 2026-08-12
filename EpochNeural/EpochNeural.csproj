@@ -82,6 +82,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="EpochDevHud.cs" />
+    <Compile Include="EpochDrillAsset.cs" />
+    <Compile Include="EpochDrillCleanup.cs" />
+    <Compile Include="EpochDrillExtractionEngine.cs" />
+    <Compile Include="EpochDrillManager.cs" />
+    <Compile Include="EpochDrillPlacementPatch.cs" />
     <Compile Include="EpochHubLogistics.cs" />
     <Compile Include="EpochHubUI.cs" />
     <Compile Include="EpochHubVisuals.cs" />

@@ -30,9 +30,12 @@ namespace EpochNeural
             _instance = go.AddComponent<EpochVacuumRunner>();
             go.AddComponent<EpochDevHud>();
 
+            // PRODUCTION UPGRADE: Attaches the 30-second background extraction core natively
+            EpochDrillExtractionEngine.InitializeEngine(go);
+
             if (Plugin.Logger != null)
             {
-                Plugin.Logger.LogInfo("EpochVacuumRunner and EpochDevHud successfully attached to persistent runner context.");
+                Plugin.Logger.LogInfo("EpochVacuumRunner, EpochDevHud, and Drill Engine attached to persistent context.");
             }
         }
 

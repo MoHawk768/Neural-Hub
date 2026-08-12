@@ -642,6 +642,9 @@ namespace EpochNeural
                 EpochDevHud.Instance.UpdateHud(false, 0, 0);
             }
 
+            // ADDED HERE: Clears out all active linked drill memory when exiting to the main menu
+            EpochDrillManager.ResetNetwork();
+
             Plugin.Logger.LogInfo("[Epoch Hub] Runtime state reset.");
         }
     }

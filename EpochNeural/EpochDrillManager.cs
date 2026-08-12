@@ -1,0 +1,340 @@
+﻿using System;
+using System.Collections.Generic;
+using SpaceCraft;
+using UnityEngine;
+
+namespace EpochNeural
+{
+    // FIX: Forced explicit public visibility modifier so other scripts see it
+    public static class EpochDrillManager
+    {
+        private static readonly Dictionary<string, int> _activeDrillRegistry = new Dictionary<string, int>();
+
+        // ============================================================
+        // VEIN DETECTION
+        // ============================================================
+        private static int _cachedVeinCount = -1;
+        private static int _cachedPlanetHash = 0;
+        private static Vector3 _cachedSpawnPosition = Vector3.zero;
+        private static bool _hasCachedSpawnPosition = false;
+        private const float LANDING_ZONE_RADIUS = 50f;
+
+        // ============================================================
+        // LANDING ZONE DRILL TRACKING
+        // ============================================================
+        private static int _landingZoneDrillId = -1;
+
+        // ============================================================
+        // PUBLIC METHODS
+        // ============================================================
+
+        public static int GetTotalVeinsOnCurrentPlanet()
+        {
+            try
+            {
+                var planetLoader = Managers.GetManager<PlanetLoader>();
+                if (planetLoader == null)
+                {
+                    Plugin.Logger?.LogWarning("[Epoch Drill] PlanetLoader not found.");
+                    return 12;
+                }
+
+                var planetData = planetLoader.GetCurrentPlanetData();
+                if (planetData == null)
+                {
+                    Plugin.Logger?.LogWarning("[Epoch Drill] No current planet data.");
+                    return 12;
+                }
+
+                int currentPlanetHash = planetData.GetPlanetHash();
+
+                if (_cachedPlanetHash == currentPlanetHash && _cachedVeinCount >= 0)
+                {
+                    return _cachedVeinCount;
+                }
+
+                var veinObjects = UnityEngine.Object.FindObjectsByType<MachineGenerationGroupVein>(
+                    UnityEngine.FindObjectsSortMode.None);
+
+                int veinCount = 0;
+                foreach (var vein in veinObjects)
+                {
+                    if (vein == null) continue;
+                    veinCount++;
+                }
+
+                _cachedVeinCount = veinCount;
+                _cachedPlanetHash = currentPlanetHash;
+
+                Plugin.Logger?.LogInfo($"[Epoch Drill] Detected {veinCount} ore veins on current planet.");
+                return veinCount > 0 ? veinCount : 12;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogError($"[Epoch Drill] Failed to count veins: {ex.Message}");
+                return 12;
+            }
+        }
+
+        public static Vector3 GetSpawnPosition()
+        {
+            if (_hasCachedSpawnPosition)
+                return _cachedSpawnPosition;
+
+            try
+            {
+                var planetLoader = Managers.GetManager<PlanetLoader>();
+                if (planetLoader == null)
+                {
+                    Plugin.Logger?.LogWarning("[Epoch Drill] PlanetLoader not found for spawn position.");
+                    return Vector3.zero;
+                }
+
+                var planetData = planetLoader.GetCurrentPlanetData();
+                if (planetData == null)
+                {
+                    Plugin.Logger?.LogWarning("[Epoch Drill] No current planet data for spawn position.");
+                    return Vector3.zero;
+                }
+
+                var spawnPositions = planetData.spawnPositions;
+                if (spawnPositions != null && spawnPositions.Length > 0)
+                {
+                    var firstSpawn = spawnPositions[0];
+                    if (firstSpawn != null && firstSpawn.positions != null && firstSpawn.positions.Count > 0)
+                    {
+                        _cachedSpawnPosition = firstSpawn.positions[0].position;
+                        _hasCachedSpawnPosition = true;
+                        Plugin.Logger?.LogInfo($"[Epoch Drill] Spawn position detected: {_cachedSpawnPosition}");
+                        return _cachedSpawnPosition;
+                    }
+                }
+
+                var playerController = Managers.GetManager<PlayersManager>()?.GetActivePlayerController();
+                if (playerController != null)
+                {
+                    _cachedSpawnPosition = playerController.transform.position;
+                    _hasCachedSpawnPosition = true;
+                    Plugin.Logger?.LogInfo($"[Epoch Drill] Using player position as spawn: {_cachedSpawnPosition}");
+                    return _cachedSpawnPosition;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogError($"[Epoch Drill] Failed to get spawn position: {ex.Message}");
+            }
+
+            return Vector3.zero;
+        }
+
+        public static bool IsInLandingZone(Vector3 position)
+        {
+            Vector3 spawnPos = GetSpawnPosition();
+            if (spawnPos == Vector3.zero)
+                return false;
+
+            float distance = Vector3.Distance(position, spawnPos);
+            bool isInZone = distance <= LANDING_ZONE_RADIUS;
+
+            if (isInZone)
+            {
+                Plugin.Logger?.LogInfo($"[Epoch Drill] Position {position} is in landing zone (distance: {distance:F1}m)");
+            }
+
+            return isInZone;
+        }
+
+        public static bool TryRegisterDrill(string sectorGroupId, int worldObjectId, Vector3 position)
+        {
+            if (string.IsNullOrEmpty(sectorGroupId))
+            {
+                if (IsInLandingZone(position))
+                {
+                    Plugin.Logger?.LogInfo($"[Epoch Network] Drill [{worldObjectId}] placed in Landing Zone.");
+                    return TryRegisterLandingZoneDrill(worldObjectId);
+                }
+                return false;
+            }
+
+            if (_activeDrillRegistry.ContainsKey(sectorGroupId))
+            {
+                Plugin.Logger?.LogWarning($"[Epoch Network] Sector Group [{sectorGroupId}] is occupied.");
+                return false;
+            }
+
+            _activeDrillRegistry[sectorGroupId] = worldObjectId;
+            Plugin.Logger?.LogInfo($"[Epoch Network] Drill [{worldObjectId}] linked to Group [{sectorGroupId}].");
+
+            RefreshNetworkTelemetry();
+            return true;
+        }
+
+        private static bool TryRegisterLandingZoneDrill(int worldObjectId)
+        {
+            if (_landingZoneDrillId != -1)
+            {
+                var existingDrill = WorldObjectsHandler.Instance?.GetWorldObjectViaId(_landingZoneDrillId);
+                if (existingDrill != null)
+                {
+                    Plugin.Logger?.LogWarning($"[Epoch Network] Landing Zone already has a drill.");
+                    return false;
+                }
+                else
+                {
+                    _landingZoneDrillId = -1;
+                }
+            }
+
+            _landingZoneDrillId = worldObjectId;
+            Plugin.Logger?.LogInfo($"[Epoch Network] Landing Zone Drill [{worldObjectId}] registered.");
+
+            RefreshNetworkTelemetry();
+            return true;
+        }
+
+        public static void UnregisterDrill(int worldObjectId)
+        {
+            // Check if this is the landing zone drill
+            if (worldObjectId == _landingZoneDrillId)
+            {
+                _landingZoneDrillId = -1;
+                Plugin.Logger?.LogInfo($"[Epoch Network] Landing Zone Drill [{worldObjectId}] unregistered.");
+                RefreshNetworkTelemetry();
+                return;
+            }
+
+            // Check if it's a biome drill
+            string targetKey = null;
+            foreach (var pair in _activeDrillRegistry)
+            {
+                if (pair.Value == worldObjectId)
+                {
+                    targetKey = pair.Key;
+                    break;
+                }
+            }
+
+            if (targetKey != null)
+            {
+                _activeDrillRegistry.Remove(targetKey);
+                Plugin.Logger?.LogInfo($"[Epoch Network] Drill [{worldObjectId}] unregistered from [{targetKey}].");
+                RefreshNetworkTelemetry();
+                return;
+            }
+
+            Plugin.Logger?.LogWarning($"[Epoch Network] Drill [{worldObjectId}] not found in any registry during unregister.");
+        }
+
+        public static bool IsBiomeOccupied(string sectorGroupId)
+        {
+            if (string.IsNullOrEmpty(sectorGroupId)) return false;
+            return _activeDrillRegistry.ContainsKey(sectorGroupId);
+        }
+
+        public static bool IsLandingZoneOccupied()
+        {
+            if (_landingZoneDrillId == -1)
+                return false;
+
+            var drill = WorldObjectsHandler.Instance?.GetWorldObjectViaId(_landingZoneDrillId);
+            if (drill == null)
+            {
+                // Drill was destroyed but not unregistered - clean up
+                _landingZoneDrillId = -1;
+                Plugin.Logger?.LogInfo($"[Epoch Network] Landing Zone drill cleaned up (was destroyed without unregister).");
+                return false;
+            }
+
+            // Also check if the game object still exists
+            var gameObject = drill.GetGameObject();
+            if (gameObject == null)
+            {
+                _landingZoneDrillId = -1;
+                Plugin.Logger?.LogInfo($"[Epoch Network] Landing Zone drill cleaned up (game object was destroyed).");
+                return false;
+            }
+
+            return true;
+        }
+
+        public static int GetActiveDrillsCount()
+        {
+            int biomeDrills = _activeDrillRegistry.Count;
+            int landingDrill = IsLandingZoneOccupied() ? 1 : 0;
+            return biomeDrills + landingDrill;
+        }
+
+        public static int GetActiveBiomeDrillsCount()
+        {
+            return _activeDrillRegistry.Count;
+        }
+
+        public static bool IsLandingZoneDrill(int worldObjectId)
+        {
+            return worldObjectId == _landingZoneDrillId;
+        }
+
+        public static Dictionary<string, int> GetActiveDrillRegistry()
+        {
+            return _activeDrillRegistry;
+        }
+
+        public static void RefreshNetworkTelemetry()
+        {
+            if (EpochDevHud.Instance != null)
+            {
+                int totalVeins = GetTotalVeinsOnCurrentPlanet();
+                EpochDevHud.Instance.UpdateHud(
+                    EpochVacuumSystem.IsInitialized(),
+                    EpochVacuumSystem.GetHudObjects(),
+                    EpochHubLogistics.GetTotalItemCount()
+                );
+            }
+        }
+
+        public static void ResetNetwork()
+        {
+            _activeDrillRegistry.Clear();
+            _landingZoneDrillId = -1;
+            _cachedVeinCount = -1;
+            _cachedPlanetHash = 0;
+            _hasCachedSpawnPosition = false;
+            RefreshNetworkTelemetry();
+        }
+
+        // ============================================================
+        // INTERNAL CLEANUP METHOD
+        // ============================================================
+
+        internal static void CleanUpOrphanedDrill(int woId)
+        {
+            // Check if this ID is registered as a biome drill
+            string targetKey = null;
+            foreach (var pair in _activeDrillRegistry)
+            {
+                if (pair.Value == woId)
+                {
+                    targetKey = pair.Key;
+                    break;
+                }
+            }
+
+            if (targetKey != null)
+            {
+                _activeDrillRegistry.Remove(targetKey);
+                Plugin.Logger?.LogInfo($"[Epoch Drill] Orphaned biome drill [{woId}] cleaned up from [{targetKey}].");
+                RefreshNetworkTelemetry();
+                return;
+            }
+
+            // Check if this ID is the landing zone drill
+            if (_landingZoneDrillId == woId)
+            {
+                _landingZoneDrillId = -1;
+                Plugin.Logger?.LogInfo($"[Epoch Drill] Orphaned landing zone drill [{woId}] cleaned up.");
+                RefreshNetworkTelemetry();
+                return;
+            }
+        }
+    }
+}
