@@ -144,6 +144,74 @@ namespace EpochNeural
             return isInZone;
         }
 
+        // ============================================================
+        // NEW: Refresh registry from world objects on game load
+        // ============================================================
+        public static void RefreshRegistryFromWorld()
+        {
+            var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
+            if (constructedObjects == null)
+            {
+                Plugin.Logger?.LogWarning("[Epoch Drill] No constructed objects found for registry refresh.");
+                return;
+            }
+
+            _activeDrillRegistry.Clear();
+            _landingZoneDrillId = -1;
+
+            Type sectorsType = Type.GetType("SpaceCraft.SectorsHandler, Assembly-CSharp");
+            object sectorsHandler = sectorsType != null ? UnityEngine.Object.FindFirstObjectByType(sectorsType) : null;
+
+            int restoredCount = 0;
+
+            foreach (var wo in constructedObjects)
+            {
+                if (wo == null || wo.GetGroup() == null || wo.GetGroup().GetId() != "Epoch_Node_Drill")
+                    continue;
+
+                Vector3 position = wo.GetPosition();
+                bool isInLandingZone = IsInLandingZone(position);
+
+                if (isInLandingZone)
+                {
+                    if (_landingZoneDrillId == -1)
+                    {
+                        _landingZoneDrillId = wo.GetId();
+                        restoredCount++;
+                        Plugin.Logger?.LogInfo($"[Epoch Network] Restored Landing Zone drill: {wo.GetId()}");
+                    }
+                    continue;
+                }
+
+                string sectorGroupId = "Unknown Area";
+                try
+                {
+                    if (sectorsHandler != null)
+                    {
+                        var sector = sectorsType.GetMethod("GetSectorWithPosition")?.Invoke(sectorsHandler, new object[] { position });
+                        if (sector != null)
+                        {
+                            sectorGroupId = sector.GetType().GetMethod("GetGroupId")?.Invoke(sector, null) as string;
+                        }
+                    }
+                }
+                catch { }
+
+                if (string.IsNullOrEmpty(sectorGroupId) || sectorGroupId == "UnknownBiome")
+                    sectorGroupId = "Unknown Area";
+
+                if (!_activeDrillRegistry.ContainsKey(sectorGroupId))
+                {
+                    _activeDrillRegistry[sectorGroupId] = wo.GetId();
+                    restoredCount++;
+                    Plugin.Logger?.LogInfo($"[Epoch Network] Restored drill in {sectorGroupId}: {wo.GetId()}");
+                }
+            }
+
+            Plugin.Logger?.LogInfo($"[Epoch Network] Refreshed registry: restored {restoredCount} drills.");
+            RefreshNetworkTelemetry();
+        }
+
         public static bool TryRegisterDrill(string sectorGroupId, int worldObjectId, Vector3 position)
         {
             if (string.IsNullOrEmpty(sectorGroupId))
@@ -239,13 +307,11 @@ namespace EpochNeural
             var drill = WorldObjectsHandler.Instance?.GetWorldObjectViaId(_landingZoneDrillId);
             if (drill == null)
             {
-                // Drill was destroyed but not unregistered - clean up
                 _landingZoneDrillId = -1;
                 Plugin.Logger?.LogInfo($"[Epoch Network] Landing Zone drill cleaned up (was destroyed without unregister).");
                 return false;
             }
 
-            // Also check if the game object still exists
             var gameObject = drill.GetGameObject();
             if (gameObject == null)
             {
@@ -281,10 +347,10 @@ namespace EpochNeural
 
         public static void RefreshNetworkTelemetry()
         {
-            if (EpochDevHud.Instance != null)
+            if (EpochHud.Instance != null)
             {
                 int totalVeins = GetTotalVeinsOnCurrentPlanet();
-                EpochDevHud.Instance.UpdateHud(
+                EpochHud.Instance.UpdateHud(
                     EpochVacuumSystem.IsInitialized(),
                     EpochVacuumSystem.GetHudObjects(),
                     EpochHubLogistics.GetTotalItemCount()
@@ -302,13 +368,8 @@ namespace EpochNeural
             RefreshNetworkTelemetry();
         }
 
-        // ============================================================
-        // INTERNAL CLEANUP METHOD
-        // ============================================================
-
         internal static void CleanUpOrphanedDrill(int woId)
         {
-            // Check if this ID is registered as a biome drill
             string targetKey = null;
             foreach (var pair in _activeDrillRegistry)
             {
@@ -327,7 +388,6 @@ namespace EpochNeural
                 return;
             }
 
-            // Check if this ID is the landing zone drill
             if (_landingZoneDrillId == woId)
             {
                 _landingZoneDrillId = -1;

@@ -36,9 +36,9 @@ namespace EpochNeural
             catch { }
         }
 
-        // ==================================================================
+        // ============================================================
         // DATA PROCESSING & LOGISTICS LAYER
-        // ==================================================================
+        // ============================================================
 
         private static string StackKey(WorldObject wo)
         {
@@ -51,6 +51,8 @@ namespace EpochNeural
     IEnumerable<WorldObject> items,
     int maxStack)
         {
+            if (items == null) return new List<(WorldObject, int, List<WorldObject>)>();
+
             int id = inventory.GetId();
             if (!_stableGroupOrder.TryGetValue(id, out var value))
             {
@@ -66,6 +68,7 @@ namespace EpochNeural
                 if (item == null) continue;
 
                 string text = StackKey(item);
+                if (string.IsNullOrEmpty(text)) continue;
 
                 if (!dictionary.TryGetValue(text, out var value2))
                 {
@@ -74,6 +77,12 @@ namespace EpochNeural
                 }
 
                 value2.Add(item);
+            }
+
+            if (list.Count == 0)
+            {
+                _stableGroupOrder.Remove(id);
+                return new List<(WorldObject, int, List<WorldObject>)>();
             }
 
             int num = value.Count > 0 ? value.Values.Max() : -1;
@@ -128,18 +137,42 @@ namespace EpochNeural
         internal static void RefreshCompressedStacks()
         {
             if (EpochNeural.EpochHubInventory == null)
+            {
+                ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
+                return;
+            }
+
+            var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
+            if (rawItems == null)
+            {
+                ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
+                return;
+            }
+
+            ActiveFrameCompressedStacks = BuildCustomStacks(
+                EpochNeural.EpochHubInventory,
+                rawItems,
+                StaticStackCap);
+        }
+
+        // ============================================================
+        // NEW: Refresh stacks on game load
+        // ============================================================
+        internal static void RefreshStacksOnLoad()
+        {
+            if (EpochNeural.EpochHubInventory == null)
                 return;
 
             var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
-
             if (rawItems == null)
                 return;
 
-            ActiveFrameCompressedStacks =
-                BuildCustomStacks(
-                    EpochNeural.EpochHubInventory,
-                    rawItems,
-                    StaticStackCap);
+            ActiveFrameCompressedStacks = BuildCustomStacks(
+                EpochNeural.EpochHubInventory,
+                rawItems,
+                StaticStackCap);
+
+            Plugin.Logger?.LogInfo("[Epoch Hub] Stacks refreshed on load.");
         }
 
         internal static int GetTotalItemCount()
@@ -177,7 +210,7 @@ namespace EpochNeural
                 if (group == null)
                     continue;
 
-                if (group.GetId() == groupId)
+                if (string.Equals(group.GetId(), groupId, StringComparison.OrdinalIgnoreCase))
                     total += stack.count;
             }
 
@@ -202,12 +235,11 @@ namespace EpochNeural
                 if (group == null)
                     continue;
 
-                if (group.GetId() != groupId)
-                    continue;
-
-                // This resource already has a full Epoch slot.
-                if (stack.count >= StaticStackCap)
-                    return true;
+                if (string.Equals(group.GetId(), groupId, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (stack.count >= StaticStackCap)
+                        return true;
+                }
             }
 
             return false;

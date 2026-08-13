@@ -168,9 +168,9 @@ namespace EpochNeural
                     }
 
                     // Show notification on HUD
-                    if (EpochDevHud.Instance != null)
+                    if (EpochHud.Instance != null)
                     {
-                        EpochDevHud.Instance.ShowNotification($"{biomeName} Node Extractor Installed", true);
+                        EpochHud.Instance.ShowNotification($"{biomeName} Node Extractor Installed", true);
                     }
                     else
                     {
@@ -240,9 +240,9 @@ namespace EpochNeural
                 EpochDrillManager.UnregisterDrill(woId);
 
                 // Show notification
-                if (EpochDevHud.Instance != null)
+                if (EpochHud.Instance != null)
                 {
-                    EpochDevHud.Instance.ShowNotification($"{biomeName} Node Extractor Removed", false);
+                    EpochHud.Instance.ShowNotification($"{biomeName} Node Extractor Removed", false);
                 }
 
                 Plugin.Logger?.LogInfo($"[Epoch Drill] Node Extractor [{woId}] removed from {biomeName}");

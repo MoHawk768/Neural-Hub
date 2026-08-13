@@ -81,7 +81,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="EpochDevHud.cs" />
+    <Compile Include="EpochHud.cs" />
     <Compile Include="EpochDrillAsset.cs" />
     <Compile Include="EpochDrillCleanup.cs" />
     <Compile Include="EpochDrillExtractionEngine.cs" />

@@ -31,10 +31,10 @@ namespace EpochNeural
 
             EpochDrillManager.UnregisterDrill(_worldObjectId);
 
-            if (EpochDevHud.Instance != null)
+            if (EpochHud.Instance != null)
             {
                 string displayName = string.IsNullOrEmpty(_biomeName) ? "Landing Area" : _biomeName;
-                EpochDevHud.Instance.ShowNotification($"{displayName} Node Extractor Removed", false);
+                EpochHud.Instance.ShowNotification($"{displayName} Node Extractor Removed", false);
             }
 
             _cleanedUp = true;

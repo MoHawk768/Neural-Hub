@@ -13,6 +13,7 @@ namespace EpochNeural
         private bool _isRunning = true;
         private float _lastLogTime = 0f;
         private const float LOG_INTERVAL = 60f;
+        private bool _hasRefreshedOnLoad = false;
 
         public static void StartRunner()
         {
@@ -28,9 +29,8 @@ namespace EpochNeural
             DontDestroyOnLoad(go);
 
             _instance = go.AddComponent<EpochVacuumRunner>();
-            go.AddComponent<EpochDevHud>();
+            go.AddComponent<EpochHud>();
 
-            // PRODUCTION UPGRADE: Attaches the 30-second background extraction core natively
             EpochDrillExtractionEngine.InitializeEngine(go);
 
             if (Plugin.Logger != null)
@@ -63,7 +63,21 @@ namespace EpochNeural
             if (Managers.GetManager<PlayersManager>()?.GetActivePlayerController() == null)
             {
                 EpochVacuumSystem.ResetSystem();
+                _hasRefreshedOnLoad = false;
                 return;
+            }
+
+            // NEW: Refresh stacks and drill registry on load
+            if (!_hasRefreshedOnLoad && EpochNeural.EpochHubInventory != null)
+            {
+                // Refresh stack display
+                EpochHubLogistics.RefreshStacksOnLoad();
+
+                // Refresh drill registry
+                EpochDrillManager.RefreshRegistryFromWorld();
+
+                _hasRefreshedOnLoad = true;
+                Plugin.Logger?.LogInfo("[Epoch] Refreshed stacks and drill registry on load.");
             }
 
             try

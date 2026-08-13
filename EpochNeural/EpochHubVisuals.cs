@@ -5,22 +5,80 @@ using HarmonyLib;
 namespace EpochNeural
 {
     /// <summary>
-    /// Permanent production visual override for the Epoch Hub.
-    /// Transforms the chassis panels into a highly polished, premium reflective Gold finish.
-    /// This component NEVER touches inventories, UI, scrolling, or data systems.
+    /// Epoch Hub Visuals - Zeolite with Pearl Shimmer
     /// </summary>
     public sealed class EpochHubVisuals : MonoBehaviour
     {
-        // Deep, rich saturated golden albedo constants to prevent white base glare washouts
-        private static readonly Color GoldBaseColor = new Color(1.0f, 0.72f, 0.15f, 1.0f);
+        // ============================================================
+        // ZEOLITE WITH PEARL SHIMMER SETTINGS
+        // ============================================================
 
-        // Golden specular reflection highlights to force pure gold reflections under harsh lighting
-        private static readonly Color GoldSpecularColor = new Color(1.0f, 0.85f, 0.40f, 1.0f);
+        // Zeolite base colors
+        private static readonly Color ZeoliteBase = new Color(0.85f, 0.82f, 0.78f, 1.0f);
+        private static readonly Color ZeoliteBaseAlt = new Color(0.80f, 0.77f, 0.73f, 1.0f);
 
-        private static readonly Color UraniumGreen = new Color(0.20f, 1.00f, 0.15f, 1f);
+        // Pearl shimmer colors (iridescent)
+        private static readonly Color PearlWhite = new Color(0.95f, 0.93f, 0.90f, 1.0f);
+        private static readonly Color PearlBlue = new Color(0.60f, 0.70f, 0.85f, 1.0f);
+        private static readonly Color PearlPink = new Color(0.85f, 0.70f, 0.75f, 1.0f);
+        private static readonly Color PearlGold = new Color(0.85f, 0.78f, 0.60f, 1.0f);
 
-        private int framesToWait = 15;      // Buffer before the very first paint pass
-        private int enforcementCycles = 120; // Continuously locks materials for ~2 seconds to defeat GhostFx sweeps
+        // Specular
+        private static readonly Color ZeoliteSpecular = new Color(0.90f, 0.88f, 0.85f, 1.0f);
+
+        private int framesToWait = 15;
+        private int enforcementCycles = 120;
+        private Material _zeoliteMat;
+
+        private Material CreateZeoliteMaterial()
+        {
+            if (_zeoliteMat != null) return _zeoliteMat;
+
+            Shader standardShader = Shader.Find("Standard");
+            if (standardShader == null)
+            {
+                standardShader = Shader.Find("Universal Render Pipeline/Lit");
+            }
+            if (standardShader == null)
+            {
+                Plugin.Logger?.LogError("[Epoch Visuals] No suitable shader found!");
+                return null;
+            }
+
+            Material mat = new Material(standardShader);
+
+            mat.SetColor("_Color", ZeoliteBase);
+            mat.SetColor("_BaseColor", ZeoliteBase);
+            mat.SetFloat("_Metallic", 0.05f);
+            mat.SetFloat("_Glossiness", 0.75f);
+            mat.SetFloat("_Smoothness", 0.75f);
+            mat.SetColor("_SpecColor", ZeoliteSpecular);
+
+            mat.EnableKeyword("_METALLICGLOSSMAP");
+            mat.EnableKeyword("_SPECULAR_SETUP");
+
+            _zeoliteMat = mat;
+            return mat;
+        }
+
+        private Color GetPearlShimmer()
+        {
+            // Time-based shimmer that cycles through pearl colors
+            float time = Time.time * 0.15f;
+
+            // Cycle through different pearl colors
+            float cycle1 = Mathf.Sin(time) * 0.5f + 0.5f;
+            float cycle2 = Mathf.Sin(time + 1.0f) * 0.5f + 0.5f;
+            float cycle3 = Mathf.Sin(time + 2.0f) * 0.5f + 0.5f;
+
+            // Blend between colors
+            Color shimmer = Color.Lerp(PearlWhite, PearlBlue, cycle1);
+            shimmer = Color.Lerp(shimmer, PearlPink, cycle2 * 0.5f);
+            shimmer = Color.Lerp(shimmer, PearlGold, cycle3 * 0.3f);
+
+            // Keep it subtle (only 15% intensity shift)
+            return Color.Lerp(ZeoliteBase, shimmer, 0.15f);
+        }
 
         private void FixedUpdate()
         {
@@ -42,8 +100,7 @@ namespace EpochNeural
             enforcementCycles--;
             if (enforcementCycles <= 0)
             {
-                Plugin.Logger.LogInfo("[Epoch Visuals] Construction animation sweeps out-waited successfully. Gold finish locked.");
-                // Self-destructs only after the game completely finishes trying to overwrite our textures!
+                Plugin.Logger.LogInfo("[Epoch Visuals] Zeolite with Pearl Shimmer locked.");
                 Destroy(this);
             }
         }
@@ -54,98 +111,64 @@ namespace EpochNeural
             if (woa == null || woa.GetWorldObject() == null || woa.GetWorldObject().GetGroup() == null) return;
             if (woa.GetWorldObject().GetGroup().GetId() != EpochNeural.HubId) return;
 
-            MeshRenderer[] renderers = GetComponentsInChildren<MeshRenderer>(true);
+            Material zeoliteMat = CreateZeoliteMaterial();
+            if (zeoliteMat == null) return;
+
+            // Get current pearl shimmer color
+            Color pearlColor = GetPearlShimmer();
+
+            Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
             if (renderers == null || renderers.Length == 0) return;
 
-            int baseColorId = Shader.PropertyToID("_BaseColor");
-            int colorId = Shader.PropertyToID("_Color");
-            int metallicId = Shader.PropertyToID("_Metallic");
-            int smoothnessId = Shader.PropertyToID("_Smoothness");
-            int glossinessId = Shader.PropertyToID("_Glossiness");
-            int specColorId = Shader.PropertyToID("_SpecColor");
-            int specHighlightsId = Shader.PropertyToID("_SpecularHighlights");
-            int emissionColorId = Shader.PropertyToID("_EmissionColor");
-            int emissionId = Shader.PropertyToID("_Emission");
-
-            foreach (MeshRenderer renderer in renderers)
+            foreach (Renderer renderer in renderers)
             {
                 if (renderer == null) continue;
 
-                // Protect text displays and UI screen overlays from receiving asset templates
-                string objName = renderer.gameObject.name;
-                if (objName == "Screen" || objName == "Text" || objName == "Screen_A" || objName.Contains("Ghost"))
+                GameObject obj = renderer.gameObject;
+                if (obj == null) continue;
+
+                string objName = obj.name;
+
+                // SKIP hologram/glass parts
+                if (objName.Contains("Holo") || objName.Contains("Glass") ||
+                    objName.Contains("Screen") || objName.Contains("Transparent") ||
+                    objName.Contains("Container3Holo"))
+                {
                     continue;
-
-                Material[] originalMaterials = renderer.sharedMaterials;
-                Material[] clonedMaterials = new Material[originalMaterials.Length];
-                bool modified = false;
-
-                for (int i = 0; i < originalMaterials.Length; i++)
-                {
-                    Material originalMat = originalMaterials[i];
-                    if (originalMat == null) continue;
-
-                    string matName = originalMat.name;
-                    string shaderName = originalMat.shader != null ? originalMat.shader.name : "";
-
-                    // --- PREMIUM POLISHED GOLD CHASSIS OVERRIDE STEP ---
-                    if (matName.Contains("TPC_Wall_Atlas") || matName.Contains("Wall_Atlas") ||
-                        matName.Contains("GenericGrey") || matName.Contains("ConstructMaterial") ||
-                        shaderName.Contains("dissolve"))
-                    {
-                        // Clone the material to preserve baseline textures while overwriting the color maps
-                        Material clonedMat = new Material(originalMat);
-
-                        // Inject warm golden albedo base attributes
-                        if (clonedMat.HasProperty(baseColorId)) clonedMat.SetColor(baseColorId, GoldBaseColor);
-                        if (clonedMat.HasProperty(colorId)) clonedMat.SetColor(colorId, GoldBaseColor);
-
-                        // Configure full physical metallic specular calculations and mirror gloss
-                        if (clonedMat.HasProperty(metallicId)) clonedMat.SetFloat(metallicId, 1.0f);
-                        if (clonedMat.HasProperty(smoothnessId)) clonedMat.SetFloat(smoothnessId, 0.94f);
-                        if (clonedMat.HasProperty(glossinessId)) clonedMat.SetFloat(glossinessId, 0.94f);
-
-                        // Overdrive specular highlight paths to catch light vectors in gold tinting
-                        if (clonedMat.HasProperty(specColorId)) clonedMat.SetColor(specColorId, GoldSpecularColor);
-                        if (clonedMat.HasProperty(specHighlightsId)) clonedMat.SetFloat(specHighlightsId, 1.0f);
-
-                        clonedMat.EnableKeyword("_SPECULAR_SETUP");
-                        clonedMat.EnableKeyword("_METALLICGLOSSMAP");
-                        clonedMat.DisableKeyword("_EMISSION");
-
-                        clonedMaterials[i] = clonedMat;
-                        modified = true;
-                    }
-                    // --- HOLOGRAM RECOLOR STEP ---
-                    else if (matName.Contains("Container3Holo"))
-                    {
-                        Material clonedMat = new Material(originalMat);
-
-                        if (clonedMat.HasProperty(baseColorId)) clonedMat.SetColor(baseColorId, UraniumGreen);
-                        if (clonedMat.HasProperty(colorId)) clonedMat.SetColor(colorId, UraniumGreen);
-                        if (clonedMat.HasProperty(emissionId)) clonedMat.EnableKeyword("_EMISSION");
-                        if (clonedMat.HasProperty(emissionColorId)) clonedMat.SetColor(emissionColorId, UraniumGreen * 8.0f);
-
-                        clonedMaterials[i] = clonedMat;
-                        modified = true;
-                    }
-                    else
-                    {
-                        clonedMaterials[i] = originalMat;
-                    }
                 }
 
-                if (modified)
+                Material[] materials = renderer.materials;
+                for (int i = 0; i < materials.Length; i++)
                 {
-                    renderer.materials = clonedMaterials;
+                    if (materials[i] == null) continue;
+
+                    string matName = materials[i].name;
+                    if (matName.Contains("Holo") || matName.Contains("Glass") ||
+                        matName.Contains("Screen") || matName.Contains("Transparent"))
+                    {
+                        continue;
+                    }
+
+                    Material newMat = new Material(zeoliteMat);
+
+                    // Apply pearl shimmer color
+                    newMat.SetColor("_Color", pearlColor);
+                    newMat.SetColor("_BaseColor", pearlColor);
+
+                    Texture mainTex = materials[i].GetTexture("_MainTex");
+                    if (mainTex != null)
+                        newMat.SetTexture("_MainTex", mainTex);
+
+                    materials[i] = newMat;
                 }
+                renderer.materials = materials;
             }
         }
     }
 }
 
 //==================================================================
-// SEPARATE BOOTSTRAP HOOK (Keeps files perfectly isolated)
+// BOOTSTRAP HOOK
 //==================================================================
 namespace EpochNeural
 {
@@ -157,12 +180,21 @@ namespace EpochNeural
         {
             if (__result == null) return;
 
+            WorldObjectAssociated woa = __result.GetComponent<WorldObjectAssociated>();
+            if (woa == null) return;
+
+            WorldObject wo = woa.GetWorldObject();
+            if (wo == null || wo.GetGroup() == null) return;
+
+            if (wo.GetGroup().GetId() != EpochNeural.HubId) return;
+
             Transform containerTargetMesh = FindDeepChild(__result.transform, "Container");
             if (containerTargetMesh != null)
             {
                 if (containerTargetMesh.gameObject.GetComponent<EpochHubVisuals>() == null)
                 {
                     containerTargetMesh.gameObject.AddComponent<EpochHubVisuals>();
+                    Plugin.Logger?.LogInfo("[Epoch Visuals] Zeolite with Pearl Shimmer applied.");
                 }
             }
             else
@@ -170,12 +202,14 @@ namespace EpochNeural
                 if (__result.GetComponent<EpochHubVisuals>() == null)
                 {
                     __result.AddComponent<EpochHubVisuals>();
+                    Plugin.Logger?.LogInfo("[Epoch Visuals] Zeolite with Pearl Shimmer applied (fallback).");
                 }
             }
         }
 
         private static Transform FindDeepChild(Transform parent, string childName)
         {
+            if (parent == null) return null;
             foreach (Transform child in parent)
             {
                 if (child.name == childName) return child;

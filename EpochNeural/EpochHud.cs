@@ -8,9 +8,9 @@ using SpaceCraft;
 
 namespace EpochNeural
 {
-    public partial class EpochDevHud : MonoBehaviour
+    public partial class EpochHud : MonoBehaviour
     {
-        public static EpochDevHud Instance { get; private set; }
+        public static EpochHud Instance { get; private set; }
 
         private GameObject _hudCanvasObject;
         private Canvas _hudCanvas;
@@ -26,8 +26,8 @@ namespace EpochNeural
         private TextMeshProUGUI _txtNotification;
 
         private string _txtHeaderContent = "Epoch Neural Network";
-        private string _txtStatusContent = "OFFLINE";
-        private Color _statusColor = Color.red;
+        private string _txtStatusContent = "ENTER HUB TO ACTIVATE";
+        private Color _statusColor = new Color(1.0f, 0.6f, 0.0f); // Orange/amber
         private string _txtPlanetContent = "Planet : Unknown";
         private string _txtDiscoveryContent = "Biome Resource Discovered: 0 / 0";
         private string _txtDrillsContent = "Active Node Extractors   : 0 / 0";
@@ -104,19 +104,19 @@ namespace EpochNeural
                 _panelObject.transform.SetParent(_hudCanvasObject.transform, false);
                 RectTransform rect = _panelObject.AddComponent<RectTransform>();
                 rect.anchorMin = new Vector2(0, 1); rect.anchorMax = new Vector2(0, 1); rect.pivot = new Vector2(0, 1);
-                // CHANGED: Moved x from 20 to 35 (about 5mm to the right)
                 rect.anchoredPosition = new Vector2(35, -20);
                 rect.sizeDelta = new Vector2(460, 300);
 
-                // CHANGED: Made background completely transparent (alpha 0)
+                // CHANGED: Made background completely transparent
                 _panelObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
 
                 _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -15), 20, BrightGreenColor);
                 _txtHeader.text = "Epoch Neural Network";
                 _txtHeader.fontStyle = FontStyles.Bold;
 
-                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(290, -15), 16, Color.red);
-                _txtStatus.text = "[OFFLINE]";
+                // Status text - starts with "ENTER HUB TO ACTIVATE" in orange
+                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(290, -15), 16, _statusColor);
+                _txtStatus.text = _txtStatusContent;
                 _txtStatus.fontStyle = FontStyles.Bold;
 
                 _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -47), 16, GreenColor);
@@ -228,6 +228,7 @@ namespace EpochNeural
 
             int placedDrillsCount = EpochDrillManager.GetActiveDrillsCount();
 
+            // Update status based on hubActive
             if (hubActive)
             {
                 _txtStatusContent = "[ONLINE]";
@@ -235,10 +236,11 @@ namespace EpochNeural
             }
             else
             {
-                _txtStatusContent = "[OFFLINE]";
-                _statusColor = Color.red;
+                _txtStatusContent = "ENTER HUB TO ACTIVATE";
+                _statusColor = new Color(1.0f, 0.6f, 0.0f); // Orange/amber
             }
 
+            // Get current planet name
             string planetName = GetCurrentPlanetName();
             _txtPlanetContent = $"Planet : {planetName}";
 
