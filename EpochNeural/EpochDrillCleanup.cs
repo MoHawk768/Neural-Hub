@@ -19,6 +19,26 @@ namespace EpochNeural
             _cleanedUp = false;
         }
 
+        /// <summary>
+        /// Returns the stored biome name for this drill
+        /// </summary>
+        public string GetBiomeName()
+        {
+            return string.IsNullOrEmpty(_biomeName) ? "Unknown Area" : _biomeName;
+        }
+
+        /// <summary>
+        /// Returns the stored world object ID
+        /// </summary>
+        public int GetWorldObjectId()
+        {
+            return _worldObjectId;
+        }
+
+        /// <summary>
+        /// Called when the GameObject is destroyed.
+        /// Only runs cleanup if the Prefix patch didn't handle it.
+        /// </summary>
         private void OnDestroy()
         {
             if (_cleanedUp)
@@ -29,14 +49,24 @@ namespace EpochNeural
 
             Plugin.Logger?.LogInfo($"[Epoch Drill Cleanup] OnDestroy called for Node Extractor ID: {_worldObjectId}");
 
+            // Try to unregister - this is a safety net in case the Prefix patch didn't fire
             EpochDrillManager.UnregisterDrill(_worldObjectId);
 
+            // Show notification if HUD exists
             if (EpochHud.Instance != null)
             {
                 string displayName = string.IsNullOrEmpty(_biomeName) ? "Landing Area" : _biomeName;
                 EpochHud.Instance.ShowNotification($"{displayName} Node Extractor Removed", false);
             }
 
+            _cleanedUp = true;
+        }
+
+        /// <summary>
+        /// Mark as cleaned up to prevent duplicate processing
+        /// </summary>
+        public void MarkCleanedUp()
+        {
             _cleanedUp = true;
         }
     }

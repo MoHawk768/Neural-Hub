@@ -170,41 +170,85 @@ namespace EpochNeural
                     continue;
 
                 Vector3 position = wo.GetPosition();
+                int worldObjectId = wo.GetId();
+
+                // ============================================================
+                // FIX: Determine biome name - Check Landing Zone FIRST
+                // ============================================================
                 bool isInLandingZone = IsInLandingZone(position);
+                string biomeName;
 
                 if (isInLandingZone)
                 {
+                    // Landing Zone drill - always use "Landing Area"
+                    biomeName = "Landing Area";
+
                     if (_landingZoneDrillId == -1)
                     {
-                        _landingZoneDrillId = wo.GetId();
+                        _landingZoneDrillId = worldObjectId;
                         restoredCount++;
-                        Plugin.Logger?.LogInfo($"[Epoch Network] Restored Landing Zone drill: {wo.GetId()}");
+                        Plugin.Logger?.LogInfo($"[Epoch Network] Restored Landing Zone drill: {worldObjectId}");
                     }
-                    continue;
-                }
-
-                string sectorGroupId = "Unknown Area";
-                try
-                {
-                    if (sectorsHandler != null)
+                    else
                     {
-                        var sector = sectorsType.GetMethod("GetSectorWithPosition")?.Invoke(sectorsHandler, new object[] { position });
-                        if (sector != null)
+                        // Duplicate landing zone drill - this shouldn't happen, but clean it up
+                        Plugin.Logger?.LogWarning($"[Epoch Network] Duplicate Landing Zone drill detected: {worldObjectId}");
+                        continue;
+                    }
+                }
+                else
+                {
+                    // Not in Landing Zone - try to get biome from sector
+                    biomeName = "Unknown Area";
+
+                    try
+                    {
+                        if (sectorsHandler != null)
                         {
-                            sectorGroupId = sector.GetType().GetMethod("GetGroupId")?.Invoke(sector, null) as string;
+                            var sector = sectorsType.GetMethod("GetSectorWithPosition")?.Invoke(sectorsHandler, new object[] { position });
+                            if (sector != null)
+                            {
+                                string sectorGroupId = sector.GetType().GetMethod("GetGroupId")?.Invoke(sector, null) as string;
+                                if (!string.IsNullOrEmpty(sectorGroupId) && sectorGroupId != "UnknownBiome")
+                                {
+                                    biomeName = sectorGroupId;
+                                }
+                            }
                         }
                     }
-                }
-                catch { }
+                    catch { }
 
-                if (string.IsNullOrEmpty(sectorGroupId) || sectorGroupId == "UnknownBiome")
-                    sectorGroupId = "Unknown Area";
+                    // If we still don't have a valid biome name, check if this drill has a cleanup component with stored biome
+                    if (biomeName == "Unknown Area")
+                    {
+                        var gameObject = wo.GetGameObject();
+                        if (gameObject != null)
+                        {
+                            var cleanup = gameObject.GetComponent<EpochDrillCleanup>();
+                            if (cleanup != null)
+                            {
+                                string storedBiome = cleanup.GetBiomeName();
+                                if (!string.IsNullOrEmpty(storedBiome) && storedBiome != "Unknown Area")
+                                {
+                                    biomeName = storedBiome;
+                                    Plugin.Logger?.LogInfo($"[Epoch Network] Restored drill in {biomeName} from stored component: {worldObjectId}");
+                                }
+                            }
+                        }
+                    }
 
-                if (!_activeDrillRegistry.ContainsKey(sectorGroupId))
-                {
-                    _activeDrillRegistry[sectorGroupId] = wo.GetId();
-                    restoredCount++;
-                    Plugin.Logger?.LogInfo($"[Epoch Network] Restored drill in {sectorGroupId}: {wo.GetId()}");
+                    // Register biome drill
+                    if (!_activeDrillRegistry.ContainsKey(biomeName))
+                    {
+                        _activeDrillRegistry[biomeName] = worldObjectId;
+                        restoredCount++;
+                        Plugin.Logger?.LogInfo($"[Epoch Network] Restored drill in {biomeName}: {worldObjectId}");
+                    }
+                    else
+                    {
+                        // Duplicate biome drill - this shouldn't happen, but log it
+                        Plugin.Logger?.LogWarning($"[Epoch Network] Duplicate drill detected in biome {biomeName}: {worldObjectId}");
+                    }
                 }
             }
 

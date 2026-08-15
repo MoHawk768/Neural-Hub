@@ -228,16 +228,57 @@ namespace EpochNeural
 
                 Plugin.Logger?.LogInfo($"[Epoch Drill] DestroyWorldObject called for Node Extractor ID: {woId}");
 
-                // Get biome name before destroying
-                Vector3 position = worldObject.GetPosition();
-                bool isInLandingZone = EpochDrillManager.IsInLandingZone(position);
+                // ============================================================
+                // FIX: Get biome name from the cleanup component if possible
+                // ============================================================
+                string biomeName = "Unknown Area";
+                var gameObject = worldObject.GetGameObject();
 
-                string biomeName = isInLandingZone ? "Landing Area" : GetSectorGroupId(position);
-                if (string.IsNullOrEmpty(biomeName) || biomeName == "UnknownBiome")
-                    biomeName = "Landing Area";
+                if (gameObject != null)
+                {
+                    var cleanup = gameObject.GetComponent<EpochDrillCleanup>();
+                    if (cleanup != null)
+                    {
+                        biomeName = cleanup.GetBiomeName();
+                        Plugin.Logger?.LogInfo($"[Epoch Drill] Using stored biome name: {biomeName}");
+                    }
+                }
+
+                // Fallback: if cleanup component not found or biome is still Unknown, try sector detection
+                if (string.IsNullOrEmpty(biomeName) || biomeName == "Unknown Area")
+                {
+                    Vector3 position = worldObject.GetPosition();
+                    bool isInLandingZone = EpochDrillManager.IsInLandingZone(position);
+                    if (isInLandingZone)
+                    {
+                        biomeName = "Landing Area";
+                    }
+                    else
+                    {
+                        string sectorName = GetSectorGroupId(position);
+                        if (!string.IsNullOrEmpty(sectorName) && sectorName != "UnknownBiome")
+                        {
+                            biomeName = sectorName;
+                        }
+                        else
+                        {
+                            biomeName = "Landing Area"; // Safe fallback
+                        }
+                    }
+                }
 
                 // Unregister the drill
                 EpochDrillManager.UnregisterDrill(woId);
+
+                // Mark cleanup component as cleaned up to prevent duplicate OnDestroy handling
+                if (gameObject != null)
+                {
+                    var cleanup = gameObject.GetComponent<EpochDrillCleanup>();
+                    if (cleanup != null)
+                    {
+                        cleanup.MarkCleanedUp();
+                    }
+                }
 
                 // Show notification
                 if (EpochHud.Instance != null)

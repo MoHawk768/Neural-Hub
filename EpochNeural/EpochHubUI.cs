@@ -316,20 +316,6 @@ namespace EpochNeural
                 _rootCanvas = null;
             }
         }
-
-        // Cleanup when hub window closes
-        [HarmonyPatch(typeof(UiWindowContainer), "OnDestroy")]
-        [HarmonyPostfix]
-        private static void PostfixClose()
-        {
-            if (_previewCoroutine != null)
-            {
-                _previewCoroutine = null;
-            }
-            _hubPreviewImage = null;
-            _currentPreviewIndex = 0;
-            // Don't reset _hasEverHadItems or _lastValidSprite here - we want to remember if we've had items
-        }
     }
 
     // ============================================================
