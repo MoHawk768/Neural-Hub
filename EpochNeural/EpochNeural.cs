@@ -14,22 +14,73 @@ namespace EpochNeural
         internal const string HubId = "Epoch_Hub";
 
         // ============================================================
+        // TIER SYSTEM DATA
+        // ============================================================
+        public class HubTierData
+        {
+            public int Tier { get; set; }
+            public string Name { get; set; }
+            public int Budget { get; set; }
+            public int StackCap { get; set; }
+            public double UnlockTi { get; set; }
+            public string StageName { get; set; }
+        }
+
+        public static readonly List<HubTierData> HubTiers = new List<HubTierData>
+        {
+            new HubTierData { Tier = 1, Name = "Epoch Hub", Budget = 50, StackCap = 25, UnlockTi = 0, StageName = "Barren" },
+            new HubTierData { Tier = 2, Name = "Neural Mesh", Budget = 100, StackCap = 100, UnlockTi = 350000, StageName = "Clouds" },
+            new HubTierData { Tier = 3, Name = "Synaptic Drive", Budget = 150, StackCap = 200, UnlockTi = 3000000, StageName = "Liquid Water" },
+            new HubTierData { Tier = 4, Name = "Quantum Core", Budget = 200, StackCap = 350, UnlockTi = 700000000, StageName = "Flora" },
+            new HubTierData { Tier = 5, Name = "Epoch Singularity", Budget = 250, StackCap = 500, UnlockTi = 120000000000, StageName = "Fish" }
+        };
+
+        private static int _currentTier = 1;
+        private static int _hubWorldObjectId = -1;
+
+        public static int CurrentTier => _currentTier;
+        public static HubTierData CurrentTierData => GetTierData(_currentTier);
+        public static int HubWorldObjectId => _hubWorldObjectId;
+
+        // ============================================================
         // HUB RESTRICTION - 1 PER PLANET
         // ============================================================
         private static int _activeHubId = -1;
         private const string HubPlacementMessage = "EPOCH: A Hub already exists on this planet!";
 
-        // --- Preserving your custom Reflection Cache ---
         private static readonly FieldInfo GroupBackingIdField =
             typeof(Group).GetField("<id>k__BackingField", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
         private static readonly FieldInfo LocalizationDictionaryField =
             typeof(Localization).GetField("localizationDictionary", BindingFlags.Static | BindingFlags.NonPublic);
 
-        // --- Core Runtime Hook States ---
         internal static bool IsInitialized;
         internal static Inventory EpochHubInventory;
         internal static Inventory PlayerInventory;
+
+        public static HubTierData GetTierData(int tier)
+        {
+            if (tier < 1 || tier > HubTiers.Count)
+                return HubTiers[0];
+            return HubTiers[tier - 1];
+        }
+
+        public static HubTierData GetNextTierData()
+        {
+            if (_currentTier >= HubTiers.Count)
+                return null;
+            return HubTiers[_currentTier];
+        }
+
+        public static bool IsAtMaxTier()
+        {
+            return _currentTier >= HubTiers.Count;
+        }
+
+        public static void SetHubWorldObjectId(int id)
+        {
+            _hubWorldObjectId = id;
+        }
 
         [HarmonyPostfix]
         private static void Postfix()
@@ -102,7 +153,14 @@ namespace EpochNeural
             if (latestHub != null)
             {
                 _activeHubId = latestHub.GetId();
-                Plugin.Logger.LogInfo($"[Epoch] Hub placed and registered. ID: {_activeHubId}");
+                _hubWorldObjectId = latestHub.GetId();
+                _currentTier = 1;
+                Plugin.Logger.LogInfo($"[Epoch] Hub placed and registered. ID: {_activeHubId}, Tier: 1");
+
+                if (EpochHubInventory != null)
+                {
+                    EpochVacuumSystem.Initialize(EpochHubInventory);
+                }
             }
         }
 
@@ -113,6 +171,7 @@ namespace EpochNeural
             if (woId == _activeHubId)
             {
                 _activeHubId = -1;
+                _hubWorldObjectId = -1;
                 Plugin.Logger.LogInfo($"[Epoch] Hub destroyed. New hub can now be placed.");
             }
         }
@@ -137,6 +196,7 @@ namespace EpochNeural
                 if (wo?.GetGroup()?.GetId() == HubId)
                 {
                     _activeHubId = wo.GetId();
+                    _hubWorldObjectId = wo.GetId();
                     return true;
                 }
             }
@@ -162,7 +222,6 @@ namespace EpochNeural
                 int removedCount = 0;
                 var itemsToRemove = new List<Group>();
 
-                // Find all items to remove
                 foreach (var group in groups)
                 {
                     if (group == null || string.IsNullOrEmpty(group.GetId()))
@@ -199,16 +258,13 @@ namespace EpochNeural
                     }
                 }
 
-                // Remove the items from the groups list
                 foreach (var item in itemsToRemove)
                 {
                     groups.Remove(item);
                     removedCount++;
                 }
 
-                // Save the updated groups list
                 GroupsHandler.SetAllGroups(groups);
-
                 Plugin.Logger.LogInfo($"[Epoch] Removed {removedCount} vanilla items from construction menu.");
             }
             catch (Exception ex)
@@ -218,7 +274,7 @@ namespace EpochNeural
         }
 
         // ============================================================
-        // HUB GHOST COLOR CHANGE - RED WHEN HUB EXISTS
+        // HUB GHOST COLOR CHANGE
         // ============================================================
 
         [HarmonyPatch(typeof(ConstructibleGhost), "InitGhost")]
@@ -384,11 +440,9 @@ namespace EpochNeural
 
         private static void RegisterLocalization()
         {
-            // Hub localization
             AddLocalization("GROUP_NAME_Epoch_Hub", "Epoch Hub");
             AddLocalization("GROUP_DESC_Epoch_Hub", "Stores every obtainable resource.");
 
-            // Node Extractor localization (changed from "Drill" to "Extractor")
             AddLocalization("GROUP_NAME_Epoch_Node_Drill", "Epoch Node Extractor");
             AddLocalization("GROUP_DESC_Epoch_Node_Drill", "Transmits automated regional extraction telemetry back to the base hub.");
         }

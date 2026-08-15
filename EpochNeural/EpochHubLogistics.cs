@@ -11,21 +11,16 @@ using TMPro;
 
 namespace EpochNeural
 {
-    /// <summary>
-    /// Detached Logistical Stacking Engine for the Epoch Hub.
-    /// One-Frame Slot Delay Mask Edition built to eliminate opening flashes without canvas leaks.
-    /// </summary>
     [HarmonyPatch]
     internal static class EpochHubLogistics
     {
-        internal const int StaticStackCap = 999;
+        private static int _cachedStackCap = 25;
         private static readonly Dictionary<int, Dictionary<string, int>> _stableGroupOrder = new Dictionary<int, Dictionary<string, int>>();
 
-        // Cache to store the results of our stack compression across the frame lifecycle safely
         internal static List<(WorldObject wo, int count, List<WorldObject> items)> ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
 
-        // Reflection cache for InventoryDisplayer._inventory
         private static FieldInfo _inventoryDisplayerInventoryField;
+        private static bool _hasPerformedCleanup = false;
 
         static EpochHubLogistics()
         {
@@ -36,9 +31,19 @@ namespace EpochNeural
             catch { }
         }
 
-        // ============================================================
-        // DATA PROCESSING & LOGISTICS LAYER
-        // ============================================================
+        public static int GetCurrentStackCap()
+        {
+            var tierData = EpochNeural.CurrentTierData;
+            return tierData?.StackCap ?? 25;
+        }
+
+        public static void RefreshStackCap()
+        {
+            _cachedStackCap = GetCurrentStackCap();
+            _hasPerformedCleanup = false; // Reset cleanup flag so it runs again on next open
+            RefreshCompressedStacks();
+            Plugin.Logger?.LogInfo($"[Epoch Hub] Stack cap updated to {_cachedStackCap}");
+        }
 
         private static string StackKey(WorldObject wo)
         {
@@ -46,10 +51,163 @@ namespace EpochNeural
             return wo.GetGroup().GetId();
         }
 
+        // ============================================================
+        // CLEANUP FUNCTION - Removes overflow items
+        // ============================================================
+
+        internal static void CleanupOverflowItems()
+        {
+            if (_hasPerformedCleanup) return;
+            if (EpochNeural.EpochHubInventory == null) return;
+
+            int stackCap = GetCurrentStackCap();
+            var hubInventory = EpochNeural.EpochHubInventory;
+            var items = hubInventory.GetInsideWorldObjects();
+
+            if (items == null || items.Count == 0)
+            {
+                _hasPerformedCleanup = true;
+                return;
+            }
+
+            Plugin.Logger?.LogInfo($"[Epoch Hub] Running overflow cleanup. Stack cap: {stackCap}");
+
+            // Group items by resource type
+            Dictionary<string, List<WorldObject>> resourceGroups = new Dictionary<string, List<WorldObject>>();
+
+            foreach (WorldObject wo in items)
+            {
+                if (wo == null || wo.GetGroup() == null) continue;
+                string groupId = wo.GetGroup().GetId();
+                if (string.IsNullOrEmpty(groupId)) continue;
+
+                if (!resourceGroups.TryGetValue(groupId, out List<WorldObject> group))
+                {
+                    group = new List<WorldObject>();
+                    resourceGroups[groupId] = group;
+                }
+                group.Add(wo);
+            }
+
+            int totalEjected = 0;
+            List<WorldObject> itemsToEject = new List<WorldObject>();
+
+            // For each resource group, check if it exceeds the stack cap
+            foreach (var kvp in resourceGroups)
+            {
+                string resourceId = kvp.Key;
+                List<WorldObject> resourceItems = kvp.Value;
+
+                // Count total items of this resource
+                int totalCount = resourceItems.Count;
+
+                if (totalCount > stackCap)
+                {
+                    // We need to eject the excess items
+                    int excessCount = totalCount - stackCap;
+                    Plugin.Logger?.LogInfo($"[Epoch Hub] Resource {resourceId} has {totalCount} items, cap is {stackCap}. Ejecting {excessCount}.");
+
+                    // Eject items from the end of the list (newest first)
+                    for (int i = resourceItems.Count - 1; i >= 0 && excessCount > 0; i--)
+                    {
+                        WorldObject wo = resourceItems[i];
+                        if (wo != null && !wo.GetIsLockedInInventory())
+                        {
+                            itemsToEject.Add(wo);
+                            excessCount--;
+                        }
+                    }
+                }
+            }
+
+            // Actually eject the items
+            if (itemsToEject.Count > 0)
+            {
+                // Get a drop position near the hub
+                Vector3 dropPosition = Vector3.zero;
+                try
+                {
+                    var hubWO = WorldObjectsHandler.Instance?.GetWorldObjectViaId(EpochNeural.HubWorldObjectId);
+                    if (hubWO != null)
+                    {
+                        dropPosition = hubWO.GetPosition();
+                        // Random offset so items don't pile exactly on top of each other
+                        dropPosition += new Vector3(
+                            UnityEngine.Random.Range(-2f, 2f),
+                            0.5f,
+                            UnityEngine.Random.Range(-2f, 2f)
+                        );
+                    }
+                    else
+                    {
+                        // Fallback - use player position
+                        var player = Managers.GetManager<PlayersManager>()?.GetActivePlayerController();
+                        if (player != null)
+                        {
+                            dropPosition = player.transform.position;
+                        }
+                    }
+                }
+                catch { }
+
+                // Eject each item
+                foreach (WorldObject wo in itemsToEject)
+                {
+                    try
+                    {
+                        // Remove from inventory
+                        if (hubInventory.ContainWorldObject(wo))
+                        {
+                            hubInventory.RemoveItem(wo);
+                            // Drop on floor
+                            if (dropPosition != Vector3.zero)
+                            {
+                                WorldObjectsHandler.Instance.DropOnFloor(wo, dropPosition);
+                                Plugin.Logger?.LogDebug($"[Epoch Hub] Ejected {wo.GetGroup()?.GetId() ?? "unknown"} to floor");
+                            }
+                            else
+                            {
+                                // Destroy if we can't drop
+                                WorldObjectsHandler.Instance.DestroyWorldObject(wo);
+                                Plugin.Logger?.LogDebug($"[Epoch Hub] Destroyed excess {wo.GetGroup()?.GetId() ?? "unknown"}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Plugin.Logger?.LogWarning($"[Epoch Hub] Failed to eject item: {ex.Message}");
+                    }
+                }
+
+                totalEjected = itemsToEject.Count;
+
+                // Show notification
+                if (EpochHud.Instance != null && totalEjected > 0)
+                {
+                    EpochHud.Instance.ShowNotification($"Ejected {totalEjected} overflow items from Hub", false);
+                }
+
+                Plugin.Logger?.LogInfo($"[Epoch Hub] Cleanup complete: {totalEjected} items ejected.");
+            }
+            else
+            {
+                Plugin.Logger?.LogInfo("[Epoch Hub] No overflow items found.");
+            }
+
+            _hasPerformedCleanup = true;
+
+            // Refresh the stacks after cleanup
+            RefreshCompressedStacks();
+        }
+
+        // ============================================================
+        // STACK BUILDING
+        // ============================================================
+
         private static List<(WorldObject wo, int count, List<WorldObject> items)> BuildCustomStacks(
-    Inventory inventory,
-    IEnumerable<WorldObject> items,
-    int maxStack)
+            Inventory inventory,
+            IEnumerable<WorldObject> items,
+            int maxStack)
         {
             if (items == null) return new List<(WorldObject, int, List<WorldObject>)>();
 
@@ -60,8 +218,9 @@ namespace EpochNeural
                 _stableGroupOrder[id] = value;
             }
 
+            // Group items by their group ID
             Dictionary<string, List<WorldObject>> dictionary = new Dictionary<string, List<WorldObject>>();
-            List<string> list = new List<string>();
+            List<string> groupOrder = new List<string>();
 
             foreach (WorldObject item in items)
             {
@@ -73,62 +232,66 @@ namespace EpochNeural
                 if (!dictionary.TryGetValue(text, out var value2))
                 {
                     value2 = dictionary[text] = new List<WorldObject>();
-                    list.Add(text);
+                    groupOrder.Add(text);
                 }
 
                 value2.Add(item);
             }
 
-            if (list.Count == 0)
+            if (groupOrder.Count == 0)
             {
                 _stableGroupOrder.Remove(id);
                 return new List<(WorldObject, int, List<WorldObject>)>();
             }
 
-            int num = value.Count > 0 ? value.Values.Max() : -1;
-            int num2 = num + 1;
+            // Maintain stable order
+            int maxRank = value.Count > 0 ? value.Values.Max() : -1;
+            int nextRank = maxRank + 1;
 
-            List<(string, int)> list3 = new List<(string, int)>(list.Count);
+            List<(string, int)> sortedGroups = new List<(string, int)>(groupOrder.Count);
 
-            foreach (string item4 in list)
+            foreach (string groupId in groupOrder)
             {
-                int value3;
-                int itemRank = value.TryGetValue(item4, out value3) ? value3 : num2++;
-
-                list3.Add((item4, itemRank));
+                int rank;
+                if (value.TryGetValue(groupId, out int existingRank))
+                {
+                    rank = existingRank;
+                }
+                else
+                {
+                    rank = nextRank++;
+                }
+                sortedGroups.Add((groupId, rank));
             }
 
-            list3.Sort((a, b) => a.Item2.CompareTo(b.Item2));
+            sortedGroups.Sort((a, b) => a.Item2.CompareTo(b.Item2));
 
             var compressedList = new List<(WorldObject, int, List<WorldObject>)>();
+            Dictionary<string, int> updatedOrder = new Dictionary<string, int>();
 
-            Dictionary<string, int> dictionary2 = new Dictionary<string, int>();
-
-            foreach (var item5 in list3)
+            foreach (var sortedGroup in sortedGroups)
             {
-                string item2 = item5.Item1;
+                string groupId = sortedGroup.Item1;
+                updatedOrder[groupId] = updatedOrder.Count;
 
-                dictionary2[item2] = _stableGroupOrder[id].Count;
+                List<WorldObject> groupItems = dictionary[groupId];
 
-                List<WorldObject> list5 = dictionary[item2];
-
-                for (int num4 = 0; num4 < list5.Count; num4 += maxStack)
+                // Split into stacks of maxStack size
+                for (int i = 0; i < groupItems.Count; i += maxStack)
                 {
-                    int num5 = Math.Min(maxStack, list5.Count - num4);
-
-                    List<WorldObject> range = list5.GetRange(num4, num5);
-
-                    compressedList.Add((list5[num4], num5, range));
+                    int stackSize = Math.Min(maxStack, groupItems.Count - i);
+                    List<WorldObject> stackItems = groupItems.GetRange(i, stackSize);
+                    compressedList.Add((stackItems[0], stackSize, stackItems));
                 }
             }
 
-            if (dictionary2.Count == 0)
+            if (updatedOrder.Count == 0)
             {
                 _stableGroupOrder.Remove(id);
             }
             else
             {
-                _stableGroupOrder[id] = dictionary2;
+                _stableGroupOrder[id] = updatedOrder;
             }
 
             return compressedList;
@@ -136,6 +299,8 @@ namespace EpochNeural
 
         internal static void RefreshCompressedStacks()
         {
+            int stackCap = GetCurrentStackCap();
+
             if (EpochNeural.EpochHubInventory == null)
             {
                 ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
@@ -143,7 +308,7 @@ namespace EpochNeural
             }
 
             var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
-            if (rawItems == null)
+            if (rawItems == null || rawItems.Count == 0)
             {
                 ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
                 return;
@@ -152,26 +317,19 @@ namespace EpochNeural
             ActiveFrameCompressedStacks = BuildCustomStacks(
                 EpochNeural.EpochHubInventory,
                 rawItems,
-                StaticStackCap);
+                stackCap);
         }
 
-        // ============================================================
-        // NEW: Refresh stacks on game load
-        // ============================================================
         internal static void RefreshStacksOnLoad()
         {
             if (EpochNeural.EpochHubInventory == null)
                 return;
 
-            var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
-            if (rawItems == null)
-                return;
+            // Run cleanup on load to fix any overflow from saved games
+            CleanupOverflowItems();
 
-            ActiveFrameCompressedStacks = BuildCustomStacks(
-                EpochNeural.EpochHubInventory,
-                rawItems,
-                StaticStackCap);
-
+            RefreshStackCap();
+            RefreshCompressedStacks();
             Plugin.Logger?.LogInfo("[Epoch Hub] Stacks refreshed on load.");
         }
 
@@ -225,6 +383,8 @@ namespace EpochNeural
             if (ActiveFrameCompressedStacks == null)
                 return false;
 
+            int stackCap = GetCurrentStackCap();
+
             foreach (var stack in ActiveFrameCompressedStacks)
             {
                 if (stack.wo == null)
@@ -237,7 +397,7 @@ namespace EpochNeural
 
                 if (string.Equals(group.GetId(), groupId, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (stack.count >= StaticStackCap)
+                    if (stack.count >= stackCap)
                         return true;
                 }
             }
@@ -249,11 +409,9 @@ namespace EpochNeural
         {
             ActiveFrameCompressedStacks.Clear();
             _stableGroupOrder.Clear();
+            _hasPerformedCleanup = false;
         }
 
-        /// <summary>
-        /// Get the inventory from an InventoryDisplayer via reflection
-        /// </summary>
         private static Inventory GetInventoryFromDisplayer(InventoryDisplayer displayer)
         {
             if (displayer == null) return null;
@@ -261,19 +419,12 @@ namespace EpochNeural
             return _inventoryDisplayerInventoryField.GetValue(displayer) as Inventory;
         }
 
-        /// <summary>
-        /// Check if the given inventory is our Epoch Hub
-        /// </summary>
         private static bool IsEpochHubInventory(Inventory inventory)
         {
             if (inventory == null) return false;
             if (EpochNeural.EpochHubInventory == null) return false;
             return inventory.GetId() == EpochNeural.EpochHubInventory.GetId();
         }
-
-        // ==================================================================
-        // HOOKS: PARAMETER INTERCEPTION
-        // ==================================================================
 
         [HarmonyPatch(typeof(InventoryDisplayer), "SetInventoryBlocks")]
         [HarmonyPrefix]
@@ -290,7 +441,8 @@ namespace EpochNeural
             if (hubItems == null || hubItems.Count == 0)
                 return true;
 
-            var compressed = BuildCustomStacks(EpochNeural.EpochHubInventory, hubItems, StaticStackCap);
+            int stackCap = GetCurrentStackCap();
+            var compressed = BuildCustomStacks(EpochNeural.EpochHubInventory, hubItems, stackCap);
 
             List<WorldObject> representationalObjects = new List<WorldObject>();
             foreach (var stack in compressed)
@@ -316,14 +468,11 @@ namespace EpochNeural
                 return false;
             }
 
-            var compressed = BuildCustomStacks(__instance, items, StaticStackCap);
+            int stackCap = GetCurrentStackCap();
+            var compressed = BuildCustomStacks(__instance, items, stackCap);
             __result = compressed.Count >= __instance.GetSize();
             return false;
         }
-
-        // ==================================================================
-        // CACHING STAGE: UPDATE BUFFER DATA
-        // ==================================================================
 
         [HarmonyPatch(typeof(InventoryDisplayer), "TrueRefreshContent")]
         [HarmonyPostfix]
@@ -336,23 +485,15 @@ namespace EpochNeural
             if (__instance.gameObject.GetComponent<DirectInventoryScroller>() == null)
                 return;
 
-            var rawItems = EpochNeural.EpochHubInventory.GetInsideWorldObjects();
-            if (rawItems == null) return;
-
-            ActiveFrameCompressedStacks = BuildCustomStacks(EpochNeural.EpochHubInventory, rawItems, StaticStackCap);
-
+            RefreshCompressedStacks();
             EpochVacuumSystem.LearnFromInventoryContent();
         }
     }
 
-    // ==================================================================
-    // PERSISTENT UI CONTROLLER BEHAVIOUR
-    // ==================================================================
+    // ============================================================
+    // STACK COUNTER
+    // ============================================================
 
-    /// <summary>
-    /// Lightweight component attached directly onto physical slot objects.
-    /// Monitors layout calculations during LateUpdate to draw stack numbers.
-    /// </summary>
     internal class EpochStackCounter : MonoBehaviour
     {
         private TextMeshProUGUI _label;
@@ -433,9 +574,9 @@ namespace EpochNeural
         }
     }
 
-    // ==================================================================
-    // INTEGRATION LAYER: SYSTEM COORDINATOR HOOK
-    // ==================================================================
+    // ============================================================
+    // SCROLLER COORDINATOR
+    // ============================================================
 
     [HarmonyPatch]
     internal static class EpochHubScrollerCoordinator
@@ -451,6 +592,13 @@ namespace EpochNeural
 
             int slotCount = grid.transform.childCount;
             var compressedData = EpochHubLogistics.ActiveFrameCompressedStacks;
+
+            // Also refresh compressed stacks if they're empty but the inventory has items
+            if ((compressedData == null || compressedData.Count == 0) && EpochNeural.EpochHubInventory.GetInsideWorldObjects().Count > 0)
+            {
+                EpochHubLogistics.RefreshCompressedStacks();
+                compressedData = EpochHubLogistics.ActiveFrameCompressedStacks;
+            }
 
             for (int i = 0; i < slotCount; i++)
             {

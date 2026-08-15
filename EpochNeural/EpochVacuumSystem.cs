@@ -1,6 +1,7 @@
 ﻿using SpaceCraft;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Reflection;
 using UnityEngine;
 
@@ -13,8 +14,6 @@ namespace EpochNeural
         // ============================================================
 
         private const float VacuumInterval = 30f;
-        private const int MaxPickupsPerCycle = 250;
-        private const int MaxStackSize = EpochHubLogistics.StaticStackCap;
 
         // ============================================================
         // RUNTIME STATE
@@ -31,6 +30,36 @@ namespace EpochNeural
         private static string _hudState = "WAITING";
         private static bool _initialized;
 
+        private static int _cachedBudget = 50;
+        private static int _cachedStackCap = 25;
+
+        // ============================================================
+        // MACHINE TYPES FOR AUTOMATION
+        // ============================================================
+
+        // Machine group IDs that have inventories we can collect from
+        private static readonly HashSet<string> _collectableMachineIds = new HashSet<string>
+        {
+            "AlgaeGenerator",
+            "WaterCollector",
+            "Furnace",
+            "BioLab",
+            "DNAExtractor",
+            "OreExtractor",
+            "Epoch_Node_Drill"
+        };
+
+        // Machine group IDs that we can supply resources to
+        private static readonly HashSet<string> _suppliableMachineIds = new HashSet<string>
+        {
+            "AutoCrafter",
+            "RocketPlatform",
+            "Furnace",
+            "BioLab",
+            "DNAExtractor",
+            "VegetationGrower"
+        };
+
         // ============================================================
         // INITIALIZATION
         // ============================================================
@@ -42,6 +71,9 @@ namespace EpochNeural
             _hubInventory = inventory;
             EpochNeural.EpochHubInventory = inventory;
 
+            // Get initial tier data
+            UpdateTierData();
+
             if (!_initialized)
             {
                 _initialized = true;
@@ -51,6 +83,33 @@ namespace EpochNeural
 
             LearnInventoryResources();
             RefreshDevelopmentHud();
+        }
+
+        internal static void UpdateTierData()
+        {
+            var tierData = EpochNeural.CurrentTierData;
+            if (tierData != null)
+            {
+                _cachedBudget = tierData.Budget;
+                _cachedStackCap = tierData.StackCap;
+            }
+            else
+            {
+                _cachedBudget = 50;
+                _cachedStackCap = 25;
+            }
+        }
+
+        public static int GetCurrentBudget()
+        {
+            UpdateTierData();
+            return _cachedBudget;
+        }
+
+        public static int GetCurrentStackCap()
+        {
+            UpdateTierData();
+            return _cachedStackCap;
         }
 
         // ============================================================
@@ -68,6 +127,7 @@ namespace EpochNeural
 
             try
             {
+                UpdateTierData();
                 RunLogisticsCycle();
             }
             catch (Exception ex)
@@ -90,21 +150,34 @@ namespace EpochNeural
             _scanNumber++;
             _hudState = "SCANNING";
 
-            Plugin.Logger.LogInfo($"[Epoch Hub] Logistics Cycle {_scanNumber}");
+            Plugin.Logger.LogInfo($"[Epoch Hub] Logistics Cycle {_scanNumber} (Budget: {_cachedBudget}, StackCap: {_cachedStackCap})");
 
             LearnInventoryResources();
             BuildCurrentResourceCounts();
 
-            int collectedFromWorld = CollectKnownResourcesFromWorld();
-            int collectedFromExtractors = CollectKnownResourcesFromExtractors();
-            int totalCollected = collectedFromWorld + collectedFromExtractors;
+            int remainingBudget = _cachedBudget;
+
+            // Priority 1: Collect from world (ground items)
+            int collectedFromWorld = CollectKnownResourcesFromWorld(ref remainingBudget);
+
+            // Priority 2: Collect from Node Extractors
+            int collectedFromExtractors = CollectKnownResourcesFromExtractors(ref remainingBudget);
+
+            // Priority 3: Collect from other machines
+            int collectedFromMachines = CollectFromAllMachines(ref remainingBudget);
+
+            // Priority 4: Supply to machines (uses remaining budget as well)
+            int suppliedToMachines = SupplyToAllMachines(ref remainingBudget);
+
+            int totalCollected = collectedFromWorld + collectedFromExtractors + collectedFromMachines;
 
             BuildCurrentResourceCounts();
 
             _totalVacuumed += totalCollected;
             _hudState = "ONLINE";
 
-            Plugin.Logger.LogInfo($"[Epoch Hub] Collected {totalCollected} resource(s) this cycle (World: {collectedFromWorld}, Extractors: {collectedFromExtractors}). Lifetime Total: {_totalVacuumed}");
+            Plugin.Logger.LogInfo($"[Epoch Hub] Collected: {totalCollected} (World: {collectedFromWorld}, Extractors: {collectedFromExtractors}, Machines: {collectedFromMachines})");
+            Plugin.Logger.LogInfo($"[Epoch Hub] Supplied: {suppliedToMachines} items to machines. Budget remaining: {remainingBudget}");
 
             RefreshDevelopmentHud();
         }
@@ -112,6 +185,11 @@ namespace EpochNeural
         // ============================================================
         // LEARNING
         // ============================================================
+
+        internal static void LearnFromInventoryContent()
+        {
+            LearnInventoryResources();
+        }
 
         private static void LearnInventoryResources()
         {
@@ -145,7 +223,7 @@ namespace EpochNeural
                 if (wo == null) continue;
                 string id = GetGroupId(wo);
                 if (string.IsNullOrEmpty(id)) continue;
-                int amount = wo.GetCount().x;
+                int amount = wo.GetCount().x > 0 ? wo.GetCount().x : 1;
                 if (_resourceCounts.ContainsKey(id))
                     _resourceCounts[id] += amount;
                 else
@@ -157,17 +235,12 @@ namespace EpochNeural
         // COLLECTION ENGINE - WORLD
         // ============================================================
 
-        private static int CollectKnownResourcesFromWorld()
+        private static int CollectKnownResourcesFromWorld(ref int remainingBudget)
         {
+            if (remainingBudget <= 0) return 0;
+
             EpochVacuumDiscovery.DiscoveryResult discovery = EpochVacuumDiscovery.DiscoverCollectibles();
             _lastObjectsSeen = discovery.ReturnedObjects;
-
-            Plugin.Logger.LogInfo("========== Epoch Discovery ==========");
-            Plugin.Logger.LogInfo($"Associated Objects : {discovery.TotalAssociatedObjects}");
-            Plugin.Logger.LogInfo($"Returned Objects   : {discovery.ReturnedObjects}");
-            Plugin.Logger.LogInfo($"Linked Inventories : {discovery.InventoryLinkedObjects}");
-            Plugin.Logger.LogInfo($"Missing WorldObjs  : {discovery.MissingWorldObjects}");
-            Plugin.Logger.LogInfo("=====================================");
 
             if (discovery.Objects == null || discovery.Objects.Count == 0) return 0;
 
@@ -177,12 +250,8 @@ namespace EpochNeural
             List<string> activeResources = GetActiveResources(groups);
             if (activeResources.Count == 0) return 0;
 
-            int remainingBudget = MaxPickupsPerCycle;
             int collected = 0;
-
-            Plugin.Logger.LogInfo($"[Epoch Hub] Learned Resources : {_learnedResources.Count}");
-            Plugin.Logger.LogInfo($"[Epoch Hub] Active Resources : {activeResources.Count}");
-            Plugin.Logger.LogInfo($"[Epoch Hub] Work Budget : {remainingBudget}");
+            int budgetUsed = 0;
 
             while (remainingBudget > 0 && activeResources.Count > 0)
             {
@@ -191,6 +260,8 @@ namespace EpochNeural
 
                 for (int i = activeResources.Count - 1; i >= 0; i--)
                 {
+                    if (remainingBudget <= 0) break;
+
                     string resourceId = activeResources[i];
 
                     EpochHubLogistics.RefreshCompressedStacks();
@@ -202,7 +273,7 @@ namespace EpochNeural
                     }
 
                     int currentAmount = EpochHubLogistics.GetResourceCount(resourceId);
-                    int remainingCapacity = MaxStackSize - currentAmount;
+                    int remainingCapacity = _cachedStackCap - currentAmount;
 
                     if (remainingCapacity <= 0)
                     {
@@ -210,27 +281,26 @@ namespace EpochNeural
                         continue;
                     }
 
-                    int actualAllocation = Mathf.Min(allocation, remainingCapacity);
+                    int actualAllocation = Mathf.Min(allocation, remainingCapacity, remainingBudget);
                     int collectedForGroup = CollectResourceGroup(resourceId, groups[resourceId], actualAllocation);
 
                     if (collectedForGroup > 0)
                     {
                         collected += collectedForGroup;
                         remainingBudget -= collectedForGroup;
+                        budgetUsed += collectedForGroup;
                         collectedAnythingThisPass = true;
                     }
 
                     EpochHubLogistics.RefreshCompressedStacks();
 
                     currentAmount = EpochHubLogistics.GetResourceCount(resourceId);
-                    remainingCapacity = MaxStackSize - currentAmount;
+                    remainingCapacity = _cachedStackCap - currentAmount;
 
                     if (groups[resourceId].Count == 0 || remainingCapacity <= 0)
                     {
                         activeResources.RemoveAt(i);
                     }
-
-                    if (remainingBudget <= 0) break;
                 }
 
                 if (!collectedAnythingThisPass) break;
@@ -238,71 +308,48 @@ namespace EpochNeural
 
             if (collected > 0) EpochHubLogistics.RefreshCompressedStacks();
 
-            Plugin.Logger.LogInfo($"[Epoch Hub] World Collection | Collected: {collected} | Remaining Budget: {remainingBudget}");
+            Plugin.Logger.LogInfo($"[Epoch Hub] World Collection | Collected: {collected} | Budget Used: {budgetUsed} | Remaining: {remainingBudget}");
 
             return collected;
         }
 
         // ============================================================
-        // COLLECTION ENGINE - NODE EXTRACTORS (FIXED - Uses TransferItem)
+        // COLLECTION ENGINE - NODE EXTRACTORS
         // ============================================================
 
-        private static int CollectKnownResourcesFromExtractors()
+        private static int CollectKnownResourcesFromExtractors(ref int remainingBudget)
         {
-            if (_hubInventory == null)
-            {
-                Plugin.Logger?.LogDebug("[Epoch Hub] No hub inventory for extractor collection.");
+            if (remainingBudget <= 0 || _hubInventory == null)
                 return 0;
-            }
 
             var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
-            if (constructedObjects == null)
-            {
-                Plugin.Logger?.LogDebug("[Epoch Hub] No constructed objects found.");
-                return 0;
-            }
+            if (constructedObjects == null) return 0;
 
             int totalCollected = 0;
-            int remainingBudget = MaxPickupsPerCycle;
+            int budgetUsed = 0;
 
-            // Build list of extractor inventories
             List<Inventory> extractorInventories = new List<Inventory>();
-            List<WorldObject> extractorWorldObjects = new List<WorldObject>();
-            List<int> extractorInventoryIds = new List<int>();
 
             foreach (var wo in constructedObjects)
             {
                 if (wo == null || wo.GetGroup() == null) continue;
-                if (wo.GetGroup().GetId() != "Epoch_Node_Drill") continue;
+                string groupId = wo.GetGroup().GetId();
+                if (groupId != "Epoch_Node_Drill" && groupId != "OreExtractor" && !groupId.Contains("OreExtractor"))
+                    continue;
 
                 int inventoryId = wo.GetLinkedInventoryId();
-                if (inventoryId == 0)
-                {
-                    Plugin.Logger?.LogDebug($"[Epoch Hub] Node Extractor {wo.GetId()} has no linked inventory.");
-                    continue;
-                }
+                if (inventoryId == 0) continue;
 
                 Inventory extractorInventory = InventoriesHandler.Instance.GetInventoryById(inventoryId);
-                if (extractorInventory == null)
-                {
-                    Plugin.Logger?.LogDebug($"[Epoch Hub] Node Extractor {wo.GetId()} inventory not found.");
-                    continue;
-                }
+                if (extractorInventory == null) continue;
 
                 extractorInventories.Add(extractorInventory);
-                extractorWorldObjects.Add(wo);
-                extractorInventoryIds.Add(inventoryId);
             }
 
-            if (extractorInventories.Count == 0)
-            {
-                Plugin.Logger?.LogDebug("[Epoch Hub] No Node Extractors with inventories found.");
-                return 0;
-            }
+            if (extractorInventories.Count == 0) return 0;
 
-            Plugin.Logger?.LogInfo($"[Epoch Hub] Found {extractorInventories.Count} Node Extractors with inventories.");
+            Plugin.Logger?.LogInfo($"[Epoch Hub] Found {extractorInventories.Count} extractors with inventories.");
 
-            // For each learned resource, check extractors
             foreach (string resourceId in _learnedResources)
             {
                 if (remainingBudget <= 0) break;
@@ -310,29 +357,22 @@ namespace EpochNeural
                 if (EpochHubLogistics.IsResourceSlotFull(resourceId)) continue;
 
                 int currentAmount = EpochHubLogistics.GetResourceCount(resourceId);
-                int remainingCapacity = MaxStackSize - currentAmount;
+                int remainingCapacity = _cachedStackCap - currentAmount;
                 if (remainingCapacity <= 0) continue;
 
-                int allocation = Mathf.Min(remainingBudget / _learnedResources.Count, remainingCapacity);
-                if (allocation <= 0) allocation = Mathf.Min(1, remainingCapacity);
-
+                int allocation = Mathf.Min(remainingBudget, remainingCapacity);
                 int collectedForResource = 0;
 
-                // Check each extractor for this resource
-                for (int e = 0; e < extractorInventories.Count; e++)
+                foreach (var extractorInventory in extractorInventories)
                 {
                     if (allocation <= 0) break;
-
-                    Inventory extractorInventory = extractorInventories[e];
-                    WorldObject extractorWO = extractorWorldObjects[e];
-                    int extractorId = extractorInventoryIds[e];
 
                     var items = extractorInventory.GetInsideWorldObjects();
                     if (items == null) continue;
 
                     for (int i = items.Count - 1; i >= 0; i--)
                     {
-                        if (allocation <= 0) break;
+                        if (allocation <= 0 || remainingBudget <= 0) break;
 
                         WorldObject item = items[i];
                         if (item == null || item.GetGroup() == null) continue;
@@ -340,13 +380,7 @@ namespace EpochNeural
 
                         try
                         {
-                            int itemId = item.GetId();
                             bool transferSuccess = false;
-
-                            // ============================================================
-                            // FIX: Use TransferItem from InventoriesHandler
-                            // ============================================================
-                            // This properly moves the item between inventories without destroying it
                             InventoriesHandler.Instance.TransferItem(
                                 extractorInventory,
                                 _hubInventory,
@@ -357,57 +391,16 @@ namespace EpochNeural
                                 }
                             );
 
-                            // Wait a frame for the transfer to complete
-                            // The transfer is async, so we need to check if it succeeded
-                            // After transfer, the item should be in the hub inventory
                             if (transferSuccess)
                             {
-                                // Verify the item was moved to the Hub
-                                var hubItems = _hubInventory.GetInsideWorldObjects();
-                                bool addedToHub = false;
-                                if (hubItems != null)
-                                {
-                                    foreach (var hubItem in hubItems)
-                                    {
-                                        if (hubItem != null && hubItem.GetId() == itemId)
-                                        {
-                                            addedToHub = true;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if (addedToHub)
-                                {
-                                    collectedForResource++;
-                                    totalCollected++;
-                                    remainingBudget--;
-                                    allocation--;
-                                    Plugin.Logger?.LogDebug($"[Epoch Hub] Transferred {resourceId} (ID: {itemId}) from Node Extractor {extractorWO.GetId()} to Hub using TransferItem.");
-                                }
-                                else
-                                {
-                                    // If it didn't work, try the manual approach as fallback
-                                    Plugin.Logger?.LogWarning($"[Epoch Hub] TransferItem failed for {resourceId} (ID: {itemId}), trying manual fallback.");
-
-                                    // Manual fallback: remove and add
-                                    if (extractorInventory.ContainWorldObject(item))
-                                    {
-                                        extractorInventory.RemoveItem(item);
-                                        if (_hubInventory.AddItem(item))
-                                        {
-                                            collectedForResource++;
-                                            totalCollected++;
-                                            remainingBudget--;
-                                            allocation--;
-                                            Plugin.Logger?.LogDebug($"[Epoch Hub] Manual fallback succeeded for {resourceId} (ID: {itemId}).");
-                                        }
-                                    }
-                                }
+                                collectedForResource++;
+                                totalCollected++;
+                                remainingBudget--;
+                                allocation--;
+                                budgetUsed++;
                             }
                             else
                             {
-                                // Transfer didn't succeed, try manual approach
                                 if (extractorInventory.ContainWorldObject(item))
                                 {
                                     extractorInventory.RemoveItem(item);
@@ -417,7 +410,7 @@ namespace EpochNeural
                                         totalCollected++;
                                         remainingBudget--;
                                         allocation--;
-                                        Plugin.Logger?.LogDebug($"[Epoch Hub] Manual fallback succeeded for {resourceId} (ID: {itemId}).");
+                                        budgetUsed++;
                                     }
                                 }
                             }
@@ -433,7 +426,7 @@ namespace EpochNeural
 
                 if (collectedForResource > 0)
                 {
-                    Plugin.Logger?.LogInfo($"[Epoch Hub] Collected {collectedForResource} {resourceId} from Node Extractors.");
+                    Plugin.Logger?.LogInfo($"[Epoch Hub] Collected {collectedForResource} {resourceId} from extractors.");
                 }
 
                 EpochHubLogistics.RefreshCompressedStacks();
@@ -442,15 +435,388 @@ namespace EpochNeural
             if (totalCollected > 0)
             {
                 EpochHubLogistics.RefreshCompressedStacks();
-                Plugin.Logger?.LogInfo($"[Epoch Hub] Extractor Collection | Total Collected: {totalCollected} | Remaining Budget: {remainingBudget}");
+                Plugin.Logger?.LogInfo($"[Epoch Hub] Extractor Collection | Total: {totalCollected} | Budget Used: {budgetUsed} | Remaining: {remainingBudget}");
             }
 
             return totalCollected;
         }
 
         // ============================================================
-        // RESOURCE LOOKUP HELPERS
+        // COLLECTION ENGINE - ALL MACHINES
         // ============================================================
+
+        private static int CollectFromAllMachines(ref int remainingBudget)
+        {
+            if (remainingBudget <= 0 || _hubInventory == null)
+                return 0;
+
+            var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
+            if (constructedObjects == null) return 0;
+
+            int totalCollected = 0;
+            int budgetUsed = 0;
+
+            foreach (var wo in constructedObjects)
+            {
+                if (remainingBudget <= 0) break;
+                if (wo == null || wo.GetGroup() == null) continue;
+
+                string groupId = wo.GetGroup().GetId();
+
+                if (!_collectableMachineIds.Contains(groupId)) continue;
+
+                if (groupId == "Epoch_Node_Drill" || groupId == "OreExtractor" || groupId.Contains("OreExtractor"))
+                    continue;
+
+                int inventoryId = wo.GetLinkedInventoryId();
+                if (inventoryId == 0) continue;
+
+                Inventory machineInventory = InventoriesHandler.Instance.GetInventoryById(inventoryId);
+                if (machineInventory == null) continue;
+
+                var items = machineInventory.GetInsideWorldObjects();
+                if (items == null || items.Count == 0) continue;
+
+                foreach (WorldObject item in items)
+                {
+                    if (remainingBudget <= 0) break;
+                    if (item == null || item.GetGroup() == null) continue;
+
+                    string resourceId = item.GetGroup().GetId();
+                    if (!_learnedResources.Contains(resourceId)) continue;
+
+                    if (EpochHubLogistics.IsResourceSlotFull(resourceId)) continue;
+
+                    try
+                    {
+                        bool transferSuccess = false;
+                        InventoriesHandler.Instance.TransferItem(
+                            machineInventory,
+                            _hubInventory,
+                            item,
+                            delegate (bool success)
+                            {
+                                transferSuccess = success;
+                            }
+                        );
+
+                        if (transferSuccess)
+                        {
+                            totalCollected++;
+                            remainingBudget--;
+                            budgetUsed++;
+                        }
+                        else
+                        {
+                            if (machineInventory.ContainWorldObject(item))
+                            {
+                                machineInventory.RemoveItem(item);
+                                if (_hubInventory.AddItem(item))
+                                {
+                                    totalCollected++;
+                                    remainingBudget--;
+                                    budgetUsed++;
+                                }
+                            }
+                        }
+
+                        EpochHubLogistics.RefreshCompressedStacks();
+                    }
+                    catch (Exception ex)
+                    {
+                        Plugin.Logger?.LogWarning($"[Epoch Hub] Error collecting {resourceId} from {groupId}: {ex.Message}");
+                    }
+                }
+            }
+
+            if (totalCollected > 0)
+            {
+                EpochHubLogistics.RefreshCompressedStacks();
+                Plugin.Logger?.LogInfo($"[Epoch Hub] Machine Collection | Total: {totalCollected} | Budget Used: {budgetUsed} | Remaining: {remainingBudget}");
+            }
+
+            return totalCollected;
+        }
+
+        // ============================================================
+        // SUPPLY ENGINE - ALL MACHINES
+        // ============================================================
+
+        private static int SupplyToAllMachines(ref int remainingBudget)
+        {
+            if (remainingBudget <= 0 || _hubInventory == null)
+                return 0;
+
+            var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
+            if (constructedObjects == null) return 0;
+
+            int totalSupplied = 0;
+            int budgetUsed = 0;
+
+            foreach (var wo in constructedObjects)
+            {
+                if (remainingBudget <= 0) break;
+                if (wo == null || wo.GetGroup() == null) continue;
+
+                string groupId = wo.GetGroup().GetId();
+
+                if (!_suppliableMachineIds.Contains(groupId)) continue;
+
+                int inventoryId = wo.GetLinkedInventoryId();
+                if (inventoryId == 0) continue;
+
+                Inventory machineInventory = InventoriesHandler.Instance.GetInventoryById(inventoryId);
+                if (machineInventory == null || machineInventory.IsFull()) continue;
+
+                List<Group> neededResources = GetMachineNeeds(wo, machineInventory);
+                if (neededResources == null || neededResources.Count == 0) continue;
+
+                foreach (Group neededGroup in neededResources)
+                {
+                    if (remainingBudget <= 0) break;
+                    if (neededGroup == null) continue;
+
+                    string resourceId = neededGroup.GetId();
+                    if (!_learnedResources.Contains(resourceId)) continue;
+
+                    int hubCount = EpochHubLogistics.GetResourceCount(resourceId);
+                    if (hubCount <= 0) continue;
+
+                    WorldObject itemToSupply = GetWorldObjectFromHub(resourceId);
+                    if (itemToSupply == null) continue;
+
+                    try
+                    {
+                        if (!machineInventory.GetIsAuthorized(itemToSupply))
+                            continue;
+
+                        bool transferSuccess = false;
+                        InventoriesHandler.Instance.TransferItem(
+                            _hubInventory,
+                            machineInventory,
+                            itemToSupply,
+                            delegate (bool success)
+                            {
+                                transferSuccess = success;
+                            }
+                        );
+
+                        if (transferSuccess)
+                        {
+                            totalSupplied++;
+                            remainingBudget--;
+                            budgetUsed++;
+                            Plugin.Logger?.LogDebug($"[Epoch Hub] Supplied {resourceId} to {groupId}");
+                        }
+                        else
+                        {
+                            if (_hubInventory.ContainWorldObject(itemToSupply))
+                            {
+                                _hubInventory.RemoveItem(itemToSupply);
+                                if (machineInventory.AddItem(itemToSupply))
+                                {
+                                    totalSupplied++;
+                                    remainingBudget--;
+                                    budgetUsed++;
+                                    Plugin.Logger?.LogDebug($"[Epoch Hub] Supplied {resourceId} to {groupId} (fallback)");
+                                }
+                            }
+                        }
+
+                        EpochHubLogistics.RefreshCompressedStacks();
+                    }
+                    catch (Exception ex)
+                    {
+                        Plugin.Logger?.LogWarning($"[Epoch Hub] Error supplying {resourceId} to {groupId}: {ex.Message}");
+                    }
+                }
+            }
+
+            if (totalSupplied > 0)
+            {
+                EpochHubLogistics.RefreshCompressedStacks();
+                Plugin.Logger?.LogInfo($"[Epoch Hub] Machine Supply | Total: {totalSupplied} | Budget Used: {budgetUsed} | Remaining: {remainingBudget}");
+            }
+
+            return totalSupplied;
+        }
+
+        // ============================================================
+        // MACHINE NEEDS DETECTION
+        // ============================================================
+
+        private static List<Group> GetMachineNeeds(WorldObject machine, Inventory machineInventory)
+        {
+            List<Group> needs = new List<Group>();
+
+            try
+            {
+                string groupId = machine.GetGroup().GetId();
+
+                var linkedGroups = machine.GetLinkedGroups();
+                if (linkedGroups != null && linkedGroups.Count > 0)
+                {
+                    if (groupId == "AutoCrafter")
+                    {
+                        foreach (Group group in linkedGroups)
+                        {
+                            var recipe = group.GetRecipe();
+                            if (recipe != null)
+                            {
+                                var ingredients = recipe.GetIngredientsGroupInRecipe();
+                                if (ingredients != null)
+                                {
+                                    foreach (Group ingredient in ingredients)
+                                    {
+                                        if (!machineInventory.ContainGroup(ingredient))
+                                        {
+                                            needs.Add(ingredient);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        foreach (Group group in linkedGroups)
+                        {
+                            if (!machineInventory.ContainGroup(group))
+                            {
+                                needs.Add(group);
+                            }
+                        }
+                    }
+                }
+
+                var logisticEntity = machineInventory.GetLogisticEntity();
+                if (logisticEntity != null)
+                {
+                    var demandGroups = logisticEntity.GetDemandGroups();
+                    if (demandGroups != null)
+                    {
+                        foreach (Group demandGroup in demandGroups)
+                        {
+                            if (!machineInventory.ContainGroup(demandGroup) && !needs.Contains(demandGroup))
+                            {
+                                needs.Add(demandGroup);
+                            }
+                        }
+                    }
+                }
+
+                if (groupId == "Furnace")
+                {
+                    var items = machineInventory.GetInsideWorldObjects();
+                    if (items != null && items.Count == 0)
+                    {
+                        foreach (string resource in _learnedResources)
+                        {
+                            var group = GroupsHandler.GetGroupViaId(resource);
+                            if (group is GroupItem item &&
+                                (item.GetItemCategory() == DataConfig.ItemCategory.FusionEnergy ||
+                                 resource.Contains("Fuel") ||
+                                 resource.Contains("Energy")))
+                            {
+                                if (!needs.Contains(group))
+                                    needs.Add(group);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (groupId == "VegetationGrower")
+                {
+                    var items = machineInventory.GetInsideWorldObjects();
+                    if (items != null && items.Count == 0)
+                    {
+                        foreach (string resource in _learnedResources)
+                        {
+                            var group = GroupsHandler.GetGroupViaId(resource);
+                            if (group is GroupItem item &&
+                                (item.GetItemCategory() == DataConfig.ItemCategory.SeedPlant ||
+                                 item.GetItemCategory() == DataConfig.ItemCategory.SeedTree ||
+                                 item.GetItemCategory() == DataConfig.ItemCategory.SeedVegetable))
+                            {
+                                if (!needs.Contains(group))
+                                    needs.Add(group);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (groupId == "BioLab")
+                {
+                    var items = machineInventory.GetInsideWorldObjects();
+                    if (items != null && items.Count == 0)
+                    {
+                        foreach (string resource in _learnedResources)
+                        {
+                            var group = GroupsHandler.GetGroupViaId(resource);
+                            if (group is GroupItem item &&
+                                (item.GetItemCategory() == DataConfig.ItemCategory.DNASequence ||
+                                 item.GetItemCategory() == DataConfig.ItemCategory.GeneticTrait))
+                            {
+                                if (!needs.Contains(group))
+                                    needs.Add(group);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (groupId == "DNAExtractor")
+                {
+                    var items = machineInventory.GetInsideWorldObjects();
+                    if (items != null && items.Count == 0)
+                    {
+                        foreach (string resource in _learnedResources)
+                        {
+                            var group = GroupsHandler.GetGroupViaId(resource);
+                            if (group is GroupItem item &&
+                                item.GetItemCategory() == DataConfig.ItemCategory.Larvae)
+                            {
+                                if (!needs.Contains(group))
+                                    needs.Add(group);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning($"[Epoch Hub] Error getting machine needs: {ex.Message}");
+            }
+
+            return needs;
+        }
+
+        // ============================================================
+        // HELPER METHODS
+        // ============================================================
+
+        private static WorldObject GetWorldObjectFromHub(string resourceId)
+        {
+            if (_hubInventory == null) return null;
+
+            var items = _hubInventory.GetInsideWorldObjects();
+            if (items == null) return null;
+
+            foreach (WorldObject wo in items)
+            {
+                if (wo == null || wo.GetGroup() == null) continue;
+                if (wo.GetGroup().GetId() == resourceId)
+                {
+                    if (!wo.GetIsLockedInInventory())
+                        return wo;
+                }
+            }
+
+            return null;
+        }
 
         private static Dictionary<string, List<WorldObject>> BuildResourceGroups(List<WorldObject> objects)
         {
@@ -537,7 +903,6 @@ namespace EpochNeural
         // HUD HELPERS
         // ============================================================
 
-        internal static void LearnFromInventoryContent() { LearnInventoryResources(); }
         internal static string GetHudState() { return _hudState; }
         internal static int GetHudObjects() { return _lastObjectsSeen; }
         internal static int GetHudCollected() { return _totalVacuumed; }

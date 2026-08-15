@@ -23,28 +23,39 @@ namespace EpochNeural
         private TextMeshProUGUI _txtDrills;
         private TextMeshProUGUI _txtLeft;
         private TextMeshProUGUI _txtCount;
+        private TextMeshProUGUI _txtStackCap;
+        private TextMeshProUGUI _txtNextUpgrade;
         private TextMeshProUGUI _txtNotification;
 
-        private string _txtHeaderContent = "Epoch Neural Network";
         private string _txtStatusContent = "ENTER HUB TO ACTIVATE";
-        private Color _statusColor = new Color(1.0f, 0.6f, 0.0f); // Orange/amber
+        private Color _statusColor = new Color(1.0f, 0.2f, 0.2f);
         private string _txtPlanetContent = "Planet : Unknown";
         private string _txtDiscoveryContent = "Biome Resource Discovered: 0 / 0";
         private string _txtDrillsContent = "Active Node Extractors   : 0 / 0";
         private string _txtLeftContent = "Biome Resources Left : 0";
         private string _txtCountContent = "Hub Item Count       : 0";
+        private string _txtNextUpgradeContent = "Next Upgrade         : --";
         private bool _isVisible = true;
         private int _planetMaxDrillGoal = 12;
 
         private Coroutine _notificationCoroutine;
+        private Coroutine _etaUpdateCoroutine;
         private const float NOTIFICATION_DURATION = 10f;
+        private const float ETA_UPDATE_INTERVAL = 1f;
 
         private readonly HashSet<string> _permanentlyScannedOres = new HashSet<string>();
-        private readonly HashSet<string> _occupiedBiomesRegistry = new HashSet<string>();
 
-        // Green color for all text
         private static readonly Color GreenColor = new Color(0.2f, 0.9f, 0.2f);
         private static readonly Color BrightGreenColor = new Color(0.0f, 1.0f, 0.0f);
+        private static readonly Color OrangeColor = new Color(1.0f, 0.6f, 0.0f);
+        private static readonly Color GoldColor = new Color(1.0f, 0.84f, 0.0f);
+        private static readonly Color CyanColor = new Color(0.0f, 0.8f, 1.0f);
+        private static readonly Color RedColor = new Color(1.0f, 0.2f, 0.2f);
+
+        private double _cachedCurrentTi = 0;
+        private double _cachedTiRate = 0;
+        private double _cachedTargetTi = 0;
+        private string _cachedNextTierName = "";
 
         private void Awake()
         {
@@ -60,13 +71,10 @@ namespace EpochNeural
 
         private IEnumerator InitializeHudRoutine()
         {
-            // Wait for the game to be fully loaded
             yield return new WaitForSeconds(3.0f);
 
-            // Check if we're in the game world (not the main menu)
             string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
 
-            // If we're in the main menu or loading screen, wait until we're in a game scene
             while (sceneName == "MainMenu" || sceneName == "Loading" || sceneName == "Splash" ||
                    sceneName.Contains("Menu") || string.IsNullOrEmpty(sceneName))
             {
@@ -74,7 +82,6 @@ namespace EpochNeural
                 sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             }
 
-            // Also wait for PlanetLoader to be ready
             var planetLoader = Managers.GetManager<PlanetLoader>();
             while (planetLoader == null || !planetLoader.GetIsLoaded())
             {
@@ -82,7 +89,6 @@ namespace EpochNeural
                 planetLoader = Managers.GetManager<PlanetLoader>();
             }
 
-            // Now initialize the HUD (this is outside the while loop so we can use try-catch)
             try
             {
                 string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
@@ -90,7 +96,7 @@ namespace EpochNeural
                 else if (currentScene.Contains("Selenea") || currentScene.Contains("Moon") || currentScene.Contains("Aqualis")) _planetMaxDrillGoal = 7;
                 else _planetMaxDrillGoal = 12;
 
-                _hudCanvasObject = new GameObject("EpochDevHudCanvas");
+                _hudCanvasObject = new GameObject("EpochHudCanvas");
                 DontDestroyOnLoad(_hudCanvasObject);
                 _hudCanvas = _hudCanvasObject.AddComponent<Canvas>();
                 _hudCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -103,31 +109,43 @@ namespace EpochNeural
                 _panelObject = new GameObject("HudPanel");
                 _panelObject.transform.SetParent(_hudCanvasObject.transform, false);
                 RectTransform rect = _panelObject.AddComponent<RectTransform>();
-                rect.anchorMin = new Vector2(0, 1); rect.anchorMax = new Vector2(0, 1); rect.pivot = new Vector2(0, 1);
-                rect.anchoredPosition = new Vector2(35, -20);
-                rect.sizeDelta = new Vector2(460, 300);
 
-                // CHANGED: Made background completely transparent
+                // Position at bottom-left, just above the vitals bars
+                // Adjusted: 5mm right (+25 pixels) and 15mm up (+75 pixels)
+                rect.anchorMin = new Vector2(0, 0);
+                rect.anchorMax = new Vector2(0, 0);
+                rect.pivot = new Vector2(0, 0);
+                rect.anchoredPosition = new Vector2(45, 195); // 25px right + 75px up from original (20, 120)
+                rect.sizeDelta = new Vector2(500, 380);
+
                 _panelObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
 
-                _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -15), 20, BrightGreenColor);
-                _txtHeader.text = "Epoch Neural Network";
-                _txtHeader.fontStyle = FontStyles.Bold;
-
-                // Status text - starts with "ENTER HUB TO ACTIVATE" in orange
-                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(290, -15), 16, _statusColor);
+                // Status line - bold red, above header
+                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(0, 0), 20, RedColor);
                 _txtStatus.text = _txtStatusContent;
                 _txtStatus.fontStyle = FontStyles.Bold;
+                _txtStatus.alignment = TextAlignmentOptions.TopLeft;
+                RectTransform statusRect = _txtStatus.GetComponent<RectTransform>();
+                statusRect.anchoredPosition = new Vector2(15, -10);
+                statusRect.sizeDelta = new Vector2(-30, 35);
 
-                _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -47), 16, GreenColor);
+                // Header with tier name
+                _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -45), 18, GoldColor);
+                _txtHeader.text = "Epoch Neural Network";
+                _txtHeader.fontStyle = FontStyles.Bold;
+                _txtHeader.alignment = TextAlignmentOptions.TopLeft;
+
+                _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -77), 14, GreenColor);
                 _txtPlanet.text = "Planet : Unknown";
 
-                _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -79), 16, GreenColor);
-                _txtDrills = CreateGenericTextObject("Line3", new Vector2(15, -111), 16, GreenColor);
-                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -143), 16, GreenColor);
-                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -175), 16, GreenColor);
+                _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -105), 14, GreenColor);
+                _txtDrills = CreateGenericTextObject("Line3", new Vector2(15, -133), 14, GreenColor);
+                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -161), 14, GreenColor);
+                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -189), 14, GreenColor);
+                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -217), 14, GreenColor);
+                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -245), 14, CyanColor);
 
-                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -207), 16, GreenColor);
+                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -285), 14, BrightGreenColor);
                 _txtNotification.text = "";
                 _txtNotification.gameObject.SetActive(false);
 
@@ -138,6 +156,7 @@ namespace EpochNeural
                 _txtPlanetContent = $"Planet : {GetCurrentPlanetName()}";
 
                 StartCoroutine(UpdateHudLoop());
+                StartETACoroutine();
             }
             catch (Exception ex)
             {
@@ -150,14 +169,29 @@ namespace EpochNeural
             GameObject textObj = new GameObject(name);
             textObj.transform.SetParent(_panelObject.transform, false);
             RectTransform rect = textObj.AddComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0, 1); rect.anchorMax = new Vector2(1, 1); rect.pivot = new Vector2(0, 1);
-            rect.anchoredPosition = anchoredPosition; rect.sizeDelta = new Vector2(-30, 30);
+            rect.anchorMin = new Vector2(0, 1);
+            rect.anchorMax = new Vector2(1, 1);
+            rect.pivot = new Vector2(0, 1);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = new Vector2(-30, 28);
 
             TextMeshProUGUI tmp = textObj.AddComponent<TextMeshProUGUI>();
             TMP_FontAsset fontAsset = FontAssetHelper.GetDefaultFont();
             if (fontAsset != null) tmp.font = fontAsset;
-            tmp.fontSize = size; tmp.color = c; tmp.alignment = TextAlignmentOptions.TopLeft; tmp.text = "...";
+            tmp.fontSize = size;
+            tmp.color = c;
+            tmp.alignment = TextAlignmentOptions.TopLeft;
+            tmp.text = "...";
             return tmp;
+        }
+
+        private void StartETACoroutine()
+        {
+            if (_etaUpdateCoroutine != null)
+            {
+                StopCoroutine(_etaUpdateCoroutine);
+            }
+            _etaUpdateCoroutine = StartCoroutine(UpdateETALoop());
         }
 
         private IEnumerator UpdateHudLoop()
@@ -166,7 +200,12 @@ namespace EpochNeural
             {
                 if (_isVisible && _panelObject != null)
                 {
-                    if (_txtHeader != null) _txtHeader.text = _txtHeaderContent;
+                    if (_txtHeader != null)
+                    {
+                        var tierData = EpochNeural.CurrentTierData;
+                        string tierName = tierData?.Name ?? "Epoch Hub";
+                        _txtHeader.text = $"Epoch Neural Network [{tierName}]";
+                    }
                     if (_txtStatus != null)
                     {
                         _txtStatus.text = _txtStatusContent;
@@ -177,8 +216,176 @@ namespace EpochNeural
                     if (_txtDrills != null) _txtDrills.text = _txtDrillsContent;
                     if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
                     if (_txtCount != null) _txtCount.text = _txtCountContent;
+                    if (_txtStackCap != null)
+                    {
+                        var tierData = EpochNeural.CurrentTierData;
+                        int stackCap = tierData?.StackCap ?? 25;
+                        _txtStackCap.text = $"Stack Cap            : {stackCap}";
+                    }
                 }
                 yield return new WaitForSeconds(0.2f);
+            }
+        }
+
+        private IEnumerator UpdateETALoop()
+        {
+            UpdateETA();
+
+            while (true)
+            {
+                yield return new WaitForSeconds(ETA_UPDATE_INTERVAL);
+
+                if (_isVisible && _panelObject != null && _txtNextUpgrade != null)
+                {
+                    UpdateETA();
+                }
+            }
+        }
+
+        private void UpdateETA()
+        {
+            try
+            {
+                if (EpochNeural.IsAtMaxTier())
+                {
+                    _txtNextUpgrade.text = "Next Upgrade         : COMPLETE!";
+                    _txtNextUpgrade.color = GoldColor;
+                    return;
+                }
+
+                var nextTier = EpochNeural.GetNextTierData();
+                if (nextTier == null)
+                {
+                    _txtNextUpgrade.text = "Next Upgrade         : COMPLETE!";
+                    _txtNextUpgrade.color = GoldColor;
+                    return;
+                }
+
+                var worldUnitsHandler = Managers.GetManager<WorldUnitsHandler>();
+                if (worldUnitsHandler == null)
+                {
+                    _txtNextUpgrade.text = "Next Upgrade         : --";
+                    return;
+                }
+
+                var terraUnit = worldUnitsHandler.GetUnit(DataConfig.WorldUnitType.Terraformation);
+                if (terraUnit == null)
+                {
+                    _txtNextUpgrade.text = "Next Upgrade         : --";
+                    return;
+                }
+
+                double currentTi = terraUnit.GetValue();
+                double targetTi = nextTier.UnlockTi;
+
+                if (currentTi >= targetTi)
+                {
+                    _txtNextUpgrade.text = $"Next Upgrade         : {nextTier.Name} - NOW!";
+                    _txtNextUpgrade.color = BrightGreenColor;
+                    return;
+                }
+
+                double tiPerSecond = terraUnit.GetIncreaseValuePersSec();
+
+                try
+                {
+                    var oxygenUnit = worldUnitsHandler.GetUnit(DataConfig.WorldUnitType.Oxygen);
+                    var heatUnit = worldUnitsHandler.GetUnit(DataConfig.WorldUnitType.Heat);
+                    var pressureUnit = worldUnitsHandler.GetUnit(DataConfig.WorldUnitType.Pressure);
+                    var biomassUnit = worldUnitsHandler.GetUnit(DataConfig.WorldUnitType.Biomass);
+                    var purificationUnit = worldUnitsHandler.GetUnit(DataConfig.WorldUnitType.Purification);
+
+                    if (oxygenUnit != null) tiPerSecond += oxygenUnit.GetIncreaseValuePersSec();
+                    if (heatUnit != null) tiPerSecond += heatUnit.GetIncreaseValuePersSec();
+                    if (pressureUnit != null) tiPerSecond += pressureUnit.GetIncreaseValuePersSec();
+                    if (biomassUnit != null) tiPerSecond += biomassUnit.GetIncreaseValuePersSec();
+                    if (purificationUnit != null) tiPerSecond += purificationUnit.GetIncreaseValuePersSec();
+                }
+                catch { }
+
+                _cachedCurrentTi = currentTi;
+                _cachedTiRate = tiPerSecond;
+                _cachedTargetTi = targetTi;
+                _cachedNextTierName = nextTier.Name;
+
+                if (tiPerSecond <= 0)
+                {
+                    _txtNextUpgrade.text = $"Next Upgrade         : {nextTier.Name} (no generation)";
+                    _txtNextUpgrade.color = OrangeColor;
+                    return;
+                }
+
+                double secondsNeeded = (targetTi - currentTi) / tiPerSecond;
+                if (secondsNeeded < 0) secondsNeeded = 0;
+
+                string timeString = FormatTime(secondsNeeded);
+
+                Color etaColor = CyanColor;
+                if (secondsNeeded < 60)
+                {
+                    etaColor = BrightGreenColor;
+                }
+                else if (secondsNeeded < 3600)
+                {
+                    etaColor = new Color(0.0f, 1.0f, 0.5f);
+                }
+                else if (secondsNeeded >= 86400)
+                {
+                    etaColor = new Color(0.7f, 0.5f, 1.0f);
+                }
+
+                _txtNextUpgrade.text = $"Next Upgrade         : {nextTier.Name} in {timeString}";
+                _txtNextUpgrade.color = etaColor;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Epoch HUD] ETA update error: {ex.Message}");
+                if (_txtNextUpgrade != null)
+                {
+                    _txtNextUpgrade.text = "Next Upgrade         : --";
+                }
+            }
+        }
+
+        private string FormatTime(double seconds)
+        {
+            if (seconds < 0) seconds = 0;
+
+            if (seconds < 60)
+            {
+                return $"{Mathf.CeilToInt((float)seconds)} sec";
+            }
+            else if (seconds < 3600)
+            {
+                int minutes = Mathf.FloorToInt((float)seconds / 60);
+                int remainingSeconds = Mathf.FloorToInt((float)seconds % 60);
+                if (remainingSeconds > 0)
+                {
+                    return $"{minutes}m {remainingSeconds}s";
+                }
+                return $"{minutes} min";
+            }
+            else if (seconds < 86400)
+            {
+                float hours = (float)seconds / 3600f;
+                int wholeHours = Mathf.FloorToInt(hours);
+                int minutes = Mathf.FloorToInt((hours - wholeHours) * 60);
+                if (minutes > 0)
+                {
+                    return $"{wholeHours}h {minutes}m";
+                }
+                return $"{hours:F1} hours";
+            }
+            else
+            {
+                float days = (float)seconds / 86400f;
+                int wholeDays = Mathf.FloorToInt(days);
+                float remainingHours = (days - wholeDays) * 24;
+                if (remainingHours > 1)
+                {
+                    return $"{wholeDays}d {remainingHours:F0}h";
+                }
+                return $"{days:F1} days";
             }
         }
 
@@ -206,6 +413,23 @@ namespace EpochNeural
             _notificationCoroutine = StartCoroutine(HideNotificationAfterDelay(NOTIFICATION_DURATION));
         }
 
+        public void ShowUpgradeNotification(string tierName)
+        {
+            if (_txtNotification == null) return;
+
+            if (_notificationCoroutine != null)
+            {
+                StopCoroutine(_notificationCoroutine);
+                _notificationCoroutine = null;
+            }
+
+            _txtNotification.text = $"▲ HUB UPGRADED TO {tierName.ToUpper()}! ▲";
+            _txtNotification.color = GoldColor;
+            _txtNotification.gameObject.SetActive(true);
+
+            _notificationCoroutine = StartCoroutine(HideNotificationAfterDelay(NOTIFICATION_DURATION));
+        }
+
         private IEnumerator HideNotificationAfterDelay(float delay)
         {
             yield return new WaitForSeconds(delay);
@@ -228,19 +452,27 @@ namespace EpochNeural
 
             int placedDrillsCount = EpochDrillManager.GetActiveDrillsCount();
 
-            // Update status based on hubActive
             if (hubActive)
             {
                 _txtStatusContent = "[ONLINE]";
                 _statusColor = BrightGreenColor;
+                if (_etaUpdateCoroutine == null)
+                {
+                    StartETACoroutine();
+                }
             }
             else
             {
                 _txtStatusContent = "ENTER HUB TO ACTIVATE";
-                _statusColor = new Color(1.0f, 0.6f, 0.0f); // Orange/amber
+                _statusColor = RedColor;
+                if (_etaUpdateCoroutine != null)
+                {
+                    StopCoroutine(_etaUpdateCoroutine);
+                    _etaUpdateCoroutine = null;
+                    _txtNextUpgrade.text = "Next Upgrade         : --";
+                }
             }
 
-            // Get current planet name
             string planetName = GetCurrentPlanetName();
             _txtPlanetContent = $"Planet : {planetName}";
 
