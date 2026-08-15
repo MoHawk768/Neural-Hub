@@ -71,13 +71,36 @@ namespace EpochNeural
 
         private IEnumerator InitializeHudRoutine()
         {
-            // Wait a bit for the game to load
-            yield return new WaitForSeconds(2.0f);
+            // ============================================================
+            // WAIT FOR AN ACTUAL GAME WORLD
+            // Do not show Epoch HUD on splash/main menu/save selection.
+            // ============================================================
 
-            // Create the HUD elements
+            PlayerMainController player = null;
+
+            while (player == null)
+            {
+                var playersManager = Managers.GetManager<PlayersManager>();
+
+                if (playersManager != null)
+                {
+                    player = playersManager.GetActivePlayerController();
+                }
+
+                if (player == null)
+                {
+                    yield return new WaitForSeconds(0.25f);
+                }
+            }
+
+            // Player now exists in a loaded save/world.
+            // Give the game UI a brief moment to finish initializing.
+            yield return new WaitForSeconds(0.5f);
+
+            // Create Epoch HUD only now.
             CreateHudElements();
 
-            // Wait a bit for planet data
+            // Wait a little for planet/world data.
             yield return new WaitForSeconds(0.5f);
 
             // Update planet name

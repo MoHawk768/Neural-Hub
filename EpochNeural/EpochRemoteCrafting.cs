@@ -1,43 +1,26 @@
-﻿using System;
+﻿using HarmonyLib;
+using SpaceCraft;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
-using HarmonyLib;
-using SpaceCraft;
 using UnityEngine;
 
 namespace EpochNeural
 {
     /// <summary>
-    /// Enables remote crafting and building from the Epoch Hub inventory
+    /// Core remote resource framework that overrides resource verification 
+    /// loops directly inside the base engine inventory data block.
     /// </summary>
     [HarmonyPatch]
     internal static class EpochRemoteCrafting
     {
         // ============================================================
-        // CONFIGURATION
-        // ============================================================
-
-        private const string MissingResourcesMessage = "EPOCH: Resources not found in Hub!";
-
-        // ============================================================
-        // RECIPE HELPERS
-        // ============================================================
-
-        private static List<Group> GetIngredientGroups(Recipe recipe)
-        {
-            if (recipe == null)
-                return new List<Group>();
-
-            return recipe.GetIngredientsGroupInRecipe() ?? new List<Group>();
-        }
-
-        // ============================================================
-        // INVENTORY CHECK - The core fix
+        // MASTER UI & PLACEMENT CHECK - Un-greys and unlocks building
         // ============================================================
 
         /// <summary>
-        /// Intercepts Inventory.ContainsItems to also check Hub inventory
-        /// This makes building and crafting work from Hub
+        /// Intercepts the master method the game uses to determine if a building 
+        /// or crafting item can be constructed or highlighted in color.
         /// </summary>
         [HarmonyPatch(typeof(Inventory), "ContainsItems")]
         [HarmonyPrefix]
@@ -45,30 +28,108 @@ namespace EpochNeural
         {
             try
             {
-                // If the inventory being checked is the Hub inventory itself, use vanilla
+                // Fallback to native check loops if evaluating the Hub container itself
                 if (EpochNeural.EpochHubInventory != null && __instance.GetId() == EpochNeural.EpochHubInventory.GetId())
                     return true;
 
                 if (groups == null || groups.Count == 0)
-                    return true;
-
-                var hubInventory = EpochNeural.EpochHubInventory;
-                if (hubInventory == null)
-                    return true;
-
-                bool allInHub = true;
-                foreach (Group group in groups)
                 {
-                    if (group == null) continue;
-                    int hubCount = EpochHubLogistics.GetResourceCount(group.GetId());
-                    if (hubCount < 1)
+                    __result = true;
+                    return false;
+                }
+
+                // Gather our base tracking inventories
+                var hubInventory = EpochNeural.EpochHubInventory;
+                var rawBackpackItems = __instance.GetInsideWorldObjects();
+
+                // Create a unified tracking ledger to trace item quantities safely
+                Dictionary<string, int> combinedResourceLedger = new Dictionary<string, int>();
+
+                // 1. Map existing resources found inside the player's local backpack
+                if (rawBackpackItems != null)
+                {
+                    foreach (WorldObject item in rawBackpackItems)
                     {
-                        allInHub = false;
+                        if (item == null || item.GetGroup() == null) continue;
+                        string id = item.GetGroup().GetId();
+                        if (combinedResourceLedger.ContainsKey(id))
+                            combinedResourceLedger[id]++;
+                        else
+                            combinedResourceLedger.Add(id, 1);
+                    }
+                }
+
+                // 2. Map existing resources found inside our remote Hub infrastructure
+                if (hubInventory != null)
+                {
+                    var rawHubItems = hubInventory.GetInsideWorldObjects();
+                    if (rawHubItems != null)
+                    {
+                        foreach (WorldObject item in rawHubItems)
+                        {
+                            if (item == null || item.GetGroup() == null || item.GetIsLockedInInventory()) continue;
+                            string id = item.GetGroup().GetId();
+                            if (combinedResourceLedger.ContainsKey(id))
+                                combinedResourceLedger[id]++;
+                            else
+                                combinedResourceLedger.Add(id, 1);
+                        }
+                    }
+                }
+
+                // 3. Evaluate if the total cluster values satisfy the construction demands
+                bool canAffordRecipe = true;
+                foreach (Group requiredGroup in groups)
+                {
+                    if (requiredGroup == null) continue;
+                    string reqId = requiredGroup.GetId();
+
+                    if (combinedResourceLedger.ContainsKey(reqId) && combinedResourceLedger[reqId] >= 1)
+                    {
+                        combinedResourceLedger[reqId]--; // Mentally allocate resource
+                    }
+                    else
+                    {
+                        canAffordRecipe = false;
                         break;
                     }
                 }
 
-                if (allInHub)
+                // If resources exist across the shared storage bank, bypass the game's backpack check
+                if (canAffordRecipe)
+                {
+                    __result = true;
+                    return false; // Skip the engine's default backpack checks entirely
+                }
+
+                return true; // Fallback to vanilla if neither storage pools have the items
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogError($"[Epoch Remote] Shared registry verification crash: {ex.Message}");
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Secondary fallback handler matching singular sub-element layout checks.
+        /// </summary>
+        [HarmonyPatch(typeof(Inventory), nameof(Inventory.ContainGroup))]
+        [HarmonyPrefix]
+        private static bool PrefixContainGroup(Inventory __instance, Group group, ref bool __result)
+        {
+            try
+            {
+                if (group == null || (EpochNeural.EpochHubInventory != null && __instance.GetId() == EpochNeural.EpochHubInventory.GetId()))
+                    return true;
+
+                // Check local inventory first
+                if (__instance.ContainGroup(group))
+                    return true;
+
+                // Check Hub database registry
+                int hubCount = EpochHubLogistics.GetResourceCount(group.GetId());
+                if (hubCount > 0)
                 {
                     __result = true;
                     return false;
@@ -78,107 +139,12 @@ namespace EpochNeural
             }
             catch (Exception ex)
             {
-                Plugin.Logger?.LogError($"[Epoch Remote] Error in PrefixContainsItems: {ex.Message}");
+                Plugin.Logger?.LogError($"[Epoch Remote] ContainGroup safety check mismatch: {ex.Message}");
                 return true;
             }
         }
-
         // ============================================================
-        // VISUAL FIX - Fix greyed out recipe icons
-        // ============================================================
-
-        /// <summary>
-        /// Intercepts GroupDisplayer.SetGreyedStatus to fix greyed out state
-        /// </summary>
-        [HarmonyPatch(typeof(GroupDisplayer), "SetGreyedStatus")]
-        [HarmonyPrefix]
-        private static bool PrefixSetGreyedStatus(GroupDisplayer __instance, bool greyed)
-        {
-            try
-            {
-                // If it's already not greyed, let it through
-                if (!greyed)
-                    return true;
-
-                // Get the hub inventory
-                var hubInventory = EpochNeural.EpochHubInventory;
-                if (hubInventory == null)
-                    return true; // Hub not built, use vanilla
-
-                // Try to find what group this displayer is showing
-                // We can check the image sprite
-                if (__instance.image == null || __instance.image.sprite == null)
-                    return true;
-
-                // Find the group that has this sprite
-                Group displayedGroup = null;
-                var allGroups = GroupsHandler.GetAllGroups();
-                if (allGroups != null)
-                {
-                    foreach (var group in allGroups)
-                    {
-                        if (group == null) continue;
-                        var groupSprite = group.GetImage();
-                        if (groupSprite != null && groupSprite == __instance.image.sprite)
-                        {
-                            displayedGroup = group;
-                            break;
-                        }
-                    }
-                }
-
-                if (displayedGroup == null)
-                    return true;
-
-                // Get the recipe
-                var recipe = displayedGroup.GetRecipe();
-                if (recipe == null)
-                    return true;
-
-                var ingredients = GetIngredientGroups(recipe);
-                if (ingredients == null || ingredients.Count == 0)
-                    return true;
-
-                // Check if ALL ingredients are available in the Hub (1 of each)
-                bool allInHub = true;
-
-                foreach (Group ingredientGroup in ingredients)
-                {
-                    if (ingredientGroup == null) continue;
-
-                    int hubCount = EpochHubLogistics.GetResourceCount(ingredientGroup.GetId());
-
-                    if (hubCount < 1)
-                    {
-                        allInHub = false;
-                        break;
-                    }
-                }
-
-                if (allInHub)
-                {
-                    // All resources are in the Hub! Skip the greyed status.
-                    // We need to manually set the colors to non-greyed
-                    __instance.image.color = new Color(1f, 1f, 1f, 1f);
-                    if (__instance.background != null)
-                    {
-                        __instance.background.color = new Color(1f, 1f, 1f, 1f);
-                    }
-                    Plugin.Logger?.LogDebug($"[Epoch Remote] Un-greying {displayedGroup.GetId()} - Hub has resources");
-                    return false; // Skip the original SetGreyedStatus
-                }
-
-                return true; // Let vanilla handle greyed state
-            }
-            catch (Exception ex)
-            {
-                Plugin.Logger?.LogError($"[Epoch Remote] Error in PrefixSetGreyedStatus: {ex.Message}");
-                return true;
-            }
-        }
-
-        // ============================================================
-        // BUILDING - OnConstructed (Consume from Hub)
+        // CONSUMPTION HOOKS - Handles items upon placement
         // ============================================================
 
         [HarmonyPatch(typeof(PlayerBuilder), "OnConstructed")]
@@ -195,225 +161,127 @@ namespace EpochNeural
                 if (ghostGroup == null)
                     return;
 
-                var hubInventory = EpochNeural.EpochHubInventory;
-                if (hubInventory == null)
-                    return;
-
                 var recipe = ghostGroup.GetRecipe();
                 if (recipe == null)
                     return;
 
-                var ingredients = GetIngredientGroups(recipe);
+                var ingredients = recipe.GetIngredientsGroupInRecipe();
                 if (ingredients == null || ingredients.Count == 0)
                     return;
 
-                // Check if Hub has the resources
-                bool allInHub = true;
-                List<Group> neededGroups = new List<Group>();
-                foreach (Group ingredientGroup in ingredients)
-                {
-                    if (ingredientGroup == null) continue;
-                    int hubCount = EpochHubLogistics.GetResourceCount(ingredientGroup.GetId());
-                    if (hubCount < 1)
-                    {
-                        allInHub = false;
-                        break;
-                    }
-                    neededGroups.Add(ingredientGroup);
-                }
-
-                if (!allInHub)
-                    return;
-
-                // Consume from Hub
-                bool consumed = ConsumeFromHub(neededGroups);
-                if (!consumed)
-                {
-                    Plugin.Logger?.LogWarning($"[Epoch Build] Failed to consume ingredients from Hub!");
-                    ShowMessage("EPOCH: Failed to consume resources from Hub!");
-                    return;
-                }
-
-                Plugin.Logger?.LogInfo($"[Epoch Build] Consumed from Hub for {ghostGroup.GetId()}");
+                // Process item consumption safely from shared storage blocks
+                ConsumeSharedResources(ingredients);
+                Plugin.Logger?.LogInfo($"[Epoch Build] Consumed shared ingredients for building: {ghostGroup.GetId()}");
             }
             catch (Exception ex)
             {
-                Plugin.Logger?.LogError($"[Epoch Build] Error in PostfixOnConstructed: {ex.Message}");
+                Plugin.Logger?.LogError($"[Epoch Build] Construction processing pipeline failure: {ex.Message}");
             }
         }
 
         // ============================================================
-        // CRAFTING
+        // CRAFTING TABLE SYNC HOOKS
         // ============================================================
 
         [HarmonyPatch(typeof(CraftManager), "TryToCraftInInventory")]
         [HarmonyPostfix]
-        private static void PostfixTryToCraftInInventory(
-            ActionCrafter sourceCrafter,
-            PlayerMainController playerController,
-            GroupItem groupItem,
-            bool __result)
+        private static void PostfixTryToCraftInInventory(ActionCrafter sourceCrafter, PlayerMainController playerController, GroupItem groupItem, bool __result)
         {
             try
             {
-                if (!__result)
-                    return;
-
-                var hubInventory = EpochNeural.EpochHubInventory;
-                if (hubInventory == null)
-                    return;
+                if (!__result) return;
 
                 var recipe = groupItem.GetRecipe();
-                if (recipe == null)
-                    return;
+                if (recipe == null) return;
 
-                var ingredients = GetIngredientGroups(recipe);
-                if (ingredients == null || ingredients.Count == 0)
-                    return;
+                var ingredients = recipe.GetIngredientsGroupInRecipe();
+                if (ingredients == null || ingredients.Count == 0) return;
 
-                bool allInHub = true;
-                List<Group> neededGroups = new List<Group>();
-                foreach (Group ingredientGroup in ingredients)
-                {
-                    if (ingredientGroup == null) continue;
-                    int hubCount = EpochHubLogistics.GetResourceCount(ingredientGroup.GetId());
-                    if (hubCount < 1)
-                    {
-                        allInHub = false;
-                        break;
-                    }
-                    neededGroups.Add(ingredientGroup);
-                }
-
-                if (!allInHub)
-                    return;
-
-                bool consumed = ConsumeFromHub(neededGroups);
-                if (!consumed)
-                {
-                    Plugin.Logger?.LogWarning($"[Epoch Craft] Failed to consume ingredients from Hub!");
-                    return;
-                }
-
-                Plugin.Logger?.LogInfo($"[Epoch Craft] Consumed from Hub for {groupItem.GetId()}");
+                ConsumeSharedResources(ingredients);
+                Plugin.Logger?.LogInfo($"[Epoch Craft] Consumed shared ingredients for craft slot: {groupItem.GetId()}");
             }
             catch (Exception ex)
             {
-                Plugin.Logger?.LogError($"[Epoch Craft] Error in PostfixTryToCraftInInventory: {ex.Message}");
+                Plugin.Logger?.LogError($"[Epoch Craft] Craft execution database track error: {ex.Message}");
             }
         }
 
         [HarmonyPatch(typeof(CraftManager), "TryToCraftInWorld")]
         [HarmonyPostfix]
-        private static void PostfixTryToCraftInWorld(
-            ActionCrafter sourceCrafter,
-            PlayerMainController playerController,
-            GroupItem groupItem,
-            bool checkSpawnPosition,
-            bool __result)
+        private static void PostfixTryToCraftInWorld(ActionCrafter sourceCrafter, PlayerMainController playerController, GroupItem groupItem, bool checkSpawnPosition, bool __result)
         {
             try
             {
-                if (!__result)
-                    return;
-
-                var hubInventory = EpochNeural.EpochHubInventory;
-                if (hubInventory == null)
-                    return;
+                if (!__result) return;
 
                 var recipe = groupItem.GetRecipe();
-                if (recipe == null)
-                    return;
+                if (recipe == null) return;
 
-                var ingredients = GetIngredientGroups(recipe);
-                if (ingredients == null || ingredients.Count == 0)
-                    return;
+                var ingredients = recipe.GetIngredientsGroupInRecipe();
+                if (ingredients == null || ingredients.Count == 0) return;
 
-                bool allInHub = true;
-                List<Group> neededGroups = new List<Group>();
-                foreach (Group ingredientGroup in ingredients)
-                {
-                    if (ingredientGroup == null) continue;
-                    int hubCount = EpochHubLogistics.GetResourceCount(ingredientGroup.GetId());
-                    if (hubCount < 1)
-                    {
-                        allInHub = false;
-                        break;
-                    }
-                    neededGroups.Add(ingredientGroup);
-                }
-
-                if (!allInHub)
-                    return;
-
-                bool consumed = ConsumeFromHub(neededGroups);
-                if (!consumed)
-                {
-                    Plugin.Logger?.LogWarning($"[Epoch Craft] Failed to consume ingredients from Hub!");
-                    return;
-                }
-
-                Plugin.Logger?.LogInfo($"[Epoch Craft] Consumed from Hub for {groupItem.GetId()}");
+                ConsumeSharedResources(ingredients);
+                Plugin.Logger?.LogInfo($"[Epoch Craft] Consumed shared ingredients for world instanced item: {groupItem.GetId()}");
             }
             catch (Exception ex)
             {
-                Plugin.Logger?.LogError($"[Epoch Craft] Error in PostfixTryToCraftInWorld: {ex.Message}");
+                Plugin.Logger?.LogError($"[Epoch Craft] Physical coordinate instancing sync error: {ex.Message}");
             }
         }
 
         // ============================================================
-        // CONSUMPTION HELPER
+        // SHARED RESOURCE DEDUCTION ENGINE
         // ============================================================
 
-        private static bool ConsumeFromHub(List<Group> neededGroups)
+        private static void ConsumeSharedResources(List<Group> ingredients)
         {
-            var hubInventory = EpochNeural.EpochHubInventory;
-            if (hubInventory == null)
-                return false;
+            PlayerMainController player = Managers.GetManager<PlayersManager>()?.GetActivePlayerController();
+            Inventory backpack = player?.GetPlayerBackpack()?.GetInventory();
+            Inventory hub = EpochNeural.EpochHubInventory;
 
-            List<WorldObject> itemsToRemove = new List<WorldObject>();
-
-            foreach (Group group in neededGroups)
+            foreach (Group ingredient in ingredients)
             {
-                if (group == null) continue;
+                if (ingredient == null) continue;
+                string reqId = ingredient.GetId();
+                bool itemCleared = false;
 
-                var items = hubInventory.GetInsideWorldObjects();
-                if (items == null)
-                    continue;
-
-                bool found = false;
-                foreach (WorldObject wo in items)
+                // Priority 1: Consume from player backpack first if available
+                if (backpack != null)
                 {
-                    if (wo == null || wo.GetGroup() == null)
-                        continue;
-
-                    if (wo.GetGroup().GetId() == group.GetId() && !wo.GetIsLockedInInventory())
+                    var backpackItems = backpack.GetInsideWorldObjects();
+                    for (int i = backpackItems.Count - 1; i >= 0; i--)
                     {
-                        itemsToRemove.Add(wo);
-                        found = true;
-                        break;
+                        if (backpackItems[i]?.GetGroup()?.GetId() == reqId)
+                        {
+                            WorldObject wo = backpackItems[i];
+                            backpack.RemoveItem(wo);
+                            WorldObjectsHandler.Instance.DestroyWorldObject(wo, true);
+                            itemCleared = true;
+                            break;
+                        }
                     }
                 }
 
-                if (!found)
-                {
-                    Plugin.Logger?.LogWarning($"[Epoch Remote] Not enough {group.GetId()} in Hub!");
-                    return false;
-                }
-            }
+                if (itemCleared) continue;
 
-            foreach (WorldObject wo in itemsToRemove)
-            {
-                if (hubInventory.ContainWorldObject(wo))
+                // Priority 2: Consume from remote Epoch Hub inventory
+                if (hub != null)
                 {
-                    hubInventory.RemoveItem(wo);
-                    WorldObjectsHandler.Instance.DestroyWorldObject(wo, true);
+                    var hubItems = hub.GetInsideWorldObjects();
+                    for (int i = hubItems.Count - 1; i >= 0; i--)
+                    {
+                        if (hubItems[i]?.GetGroup()?.GetId() == reqId && !hubItems[i].GetIsLockedInInventory())
+                        {
+                            WorldObject wo = hubItems[i];
+                            hub.RemoveItem(wo);
+                            WorldObjectsHandler.Instance.DestroyWorldObject(wo, true);
+                            break;
+                        }
+                    }
                 }
             }
 
             EpochHubLogistics.RefreshCompressedStacks();
-            Plugin.Logger?.LogInfo($"[Epoch Remote] Consumed {itemsToRemove.Count} items from Hub.");
-            return true;
         }
 
         private static void ShowMessage(string message)
@@ -425,14 +293,103 @@ namespace EpochNeural
                 {
                     hud.DisplayCursorText(message, 3f);
                 }
-                else
+            }
+            catch { }
+        }
+    }
+
+    // ============================================================
+    // CONSTRUCTION RECIPE AVAILABILITY
+    // Shows Hub resources as available in the construction recipe UI
+    // ============================================================
+
+    [HarmonyPatch(typeof(Inventory), nameof(Inventory.ItemsContainsStatus))]
+    internal static class EpochRecipeAvailabilityPatch
+    {
+        [HarmonyPostfix]
+        private static void Postfix(
+            Inventory __instance,
+            List<Group> groups,
+            ref List<bool> __result)
+        {
+            try
+            {
+                if (__instance == null || groups == null || groups.Count == 0)
+                    return;
+
+                var player =
+                    Managers.GetManager<PlayersManager>()?
+                        .GetActivePlayerController();
+
+                if (player == null)
+                    return;
+
+                Inventory playerBackpack =
+                    player.GetPlayerBackpack()?.GetInventory();
+
+                // Only augment the player's backpack availability.
+                if (playerBackpack == null ||
+                    __instance.GetId() != playerBackpack.GetId())
+                    return;
+
+                Inventory hubInventory = EpochNeural.EpochHubInventory;
+
+                if (hubInventory == null)
+                    return;
+
+                var hubItems = hubInventory.GetInsideWorldObjects();
+
+                if (hubItems == null || hubItems.Count == 0)
+                    return;
+
+                // Track which Hub objects have already been allocated
+                // to recipe ingredients.
+                HashSet<int> usedHubObjects = new HashSet<int>();
+
+                for (int i = 0; i < groups.Count; i++)
                 {
-                    Plugin.Logger?.LogWarning(message);
+                    // Already satisfied by backpack.
+                    if (i < __result.Count && __result[i])
+                        continue;
+
+                    Group requiredGroup = groups[i];
+
+                    if (requiredGroup == null)
+                        continue;
+
+                    // Find one unused matching object in the Hub.
+                    foreach (WorldObject hubObject in hubItems)
+                    {
+                        if (hubObject == null)
+                            continue;
+
+                        if (usedHubObjects.Contains(hubObject.GetId()))
+                            continue;
+
+                        Group hubGroup = hubObject.GetGroup();
+
+                        if (hubGroup == null)
+                            continue;
+
+                        if (hubGroup.GetId() != requiredGroup.GetId())
+                            continue;
+
+                        if (hubObject.GetIsLockedInInventory())
+                            continue;
+
+                        usedHubObjects.Add(hubObject.GetId());
+
+                        if (i < __result.Count)
+                            __result[i] = true;
+
+                        break;
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Plugin.Logger?.LogError($"[Epoch Remote] Error showing message: {ex.Message}");
+                Plugin.Logger?.LogError(
+                    $"[Epoch Remote] Recipe availability patch failed: {ex}");
             }
         }
     }
