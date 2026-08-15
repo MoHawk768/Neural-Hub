@@ -395,11 +395,31 @@ namespace EpochNeural
                 _relocationStarting = true;
 
                 bool ghostCreated =
-                    builder.SetNewGhost(
-                        group,
-                        existingHub);
+    builder.SetNewGhost(
+        group,
+        existingHub);
 
                 _relocationStarting = false;
+
+                if (ghostCreated)
+                {
+                    ConstructibleGhost relocationGhost =
+                        GetCurrentGhost(builder);
+
+                    if (relocationGhost != null)
+                    {
+                        // Start relocation using the EXISTING Hub orientation.
+                        // This prevents Quaternion.identity from reaching
+                        // DropOnFloorWithRotation(), which would cause the
+                        // vanilla game to apply a random 90-180 degree rotation.
+                        relocationGhost.transform.rotation =
+                            existingHub.GetRotation();
+
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Relocation] Initial rotation restored from existing Hub: " +
+                            $"{existingHub.GetRotation().eulerAngles}");
+                    }
+                }
 
                 if (!ghostCreated)
                 {
@@ -806,6 +826,30 @@ namespace EpochNeural
             catch
             {
                 Plugin.Logger?.LogWarning(message);
+            }
+        }
+
+        // ============================================================
+        // RELOCATION GHOST HELPER
+        // ============================================================
+
+        private static ConstructibleGhost GetCurrentGhost(
+            PlayerBuilder builder)
+        {
+            try
+            {
+                if (builder == null || GhostField == null)
+                    return null;
+
+                return GhostField.GetValue(builder)
+                    as ConstructibleGhost;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Relocation] Could not retrieve relocation ghost: {ex.Message}");
+
+                return null;
             }
         }
     }
