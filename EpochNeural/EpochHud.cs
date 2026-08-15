@@ -142,7 +142,7 @@ namespace EpochNeural
                 _panelObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
 
                 // Status line - bold red, above header
-                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(0, 0), 20, RedColor);
+                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(0, 0), 22, RedColor);
                 _txtStatus.text = _txtStatusContent;
                 _txtStatus.fontStyle = FontStyles.Bold;
                 _txtStatus.alignment = TextAlignmentOptions.TopLeft;
@@ -151,22 +151,22 @@ namespace EpochNeural
                 statusRect.sizeDelta = new Vector2(-30, 35);
 
                 // Header with tier name
-                _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -45), 18, GoldColor);
+                _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -45), 20, GoldColor);
                 _txtHeader.text = "Epoch Neural Network";
                 _txtHeader.fontStyle = FontStyles.Bold;
                 _txtHeader.alignment = TextAlignmentOptions.TopLeft;
 
-                _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -77), 14, GreenColor);
+                _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -77), 16, GreenColor);
                 _txtPlanet.text = "Planet : Unknown";
 
-                _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -105), 14, GreenColor);
-                _txtDrills = CreateGenericTextObject("Line3", new Vector2(15, -133), 14, GreenColor);
-                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -161), 14, GreenColor);
-                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -189), 14, GreenColor);
-                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -217), 14, GreenColor);
-                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -245), 14, CyanColor);
+                _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -105), 16, GreenColor);
+                _txtDrills = CreateGenericTextObject("Line3", new Vector2(15, -133), 16, GreenColor);
+                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -161), 16, GreenColor);
+                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -189), 16, GreenColor);
+                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -217), 16, GreenColor);
+                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -245), 16, CyanColor);
 
-                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -285), 14, BrightGreenColor);
+                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -285), 16, BrightGreenColor);
                 _txtNotification.text = "";
                 _txtNotification.gameObject.SetActive(false);
 
