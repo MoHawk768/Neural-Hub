@@ -333,6 +333,9 @@ namespace EpochNeural
             Plugin.Logger?.LogInfo("[Epoch Hub] Stacks refreshed on load.");
         }
 
+        /// <summary>
+        /// Gets the total number of items in the Hub inventory
+        /// </summary>
         internal static int GetTotalItemCount()
         {
             int total = 0;
@@ -348,6 +351,10 @@ namespace EpochNeural
             return total;
         }
 
+        /// <summary>
+        /// Gets the count of a specific resource in the Hub inventory
+        /// Used by remote crafting system to check if resources are available
+        /// </summary>
         internal static int GetResourceCount(string groupId)
         {
             if (string.IsNullOrEmpty(groupId))
@@ -375,6 +382,10 @@ namespace EpochNeural
             return total;
         }
 
+        /// <summary>
+        /// Checks if a resource slot is full (at stack cap)
+        /// Used by extraction system to prevent overflow
+        /// </summary>
         internal static bool IsResourceSlotFull(string groupId)
         {
             if (string.IsNullOrEmpty(groupId))

@@ -91,6 +91,7 @@
     <Compile Include="EpochHubUI.cs" />
     <Compile Include="EpochHubVisuals.cs" />
     <Compile Include="EpochNeural.cs" />
+    <Compile Include="EpochRemoteCrafting.cs" />
     <Compile Include="EpochVacuumDiscovery.cs" />
     <Compile Include="EpochVacuumRunner.cs" />
     <Compile Include="EpochVacuumSystem.cs" />

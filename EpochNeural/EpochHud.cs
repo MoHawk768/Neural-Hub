@@ -34,9 +34,9 @@ namespace EpochNeural
         private string _txtDrillsContent = "Active Node Extractors   : 0 / 0";
         private string _txtLeftContent = "Biome Resources Left : 0";
         private string _txtCountContent = "Hub Item Count       : 0";
-        private string _txtNextUpgradeContent = "Next Upgrade         : --";
         private bool _isVisible = true;
         private int _planetMaxDrillGoal = 12;
+        private bool _hudInitialized = false;
 
         private Coroutine _notificationCoroutine;
         private Coroutine _etaUpdateCoroutine;
@@ -71,31 +71,30 @@ namespace EpochNeural
 
         private IEnumerator InitializeHudRoutine()
         {
-            yield return new WaitForSeconds(3.0f);
+            // Wait a bit for the game to load
+            yield return new WaitForSeconds(2.0f);
 
-            string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            // Create the HUD elements
+            CreateHudElements();
 
-            while (sceneName == "MainMenu" || sceneName == "Loading" || sceneName == "Splash" ||
-                   sceneName.Contains("Menu") || string.IsNullOrEmpty(sceneName))
-            {
-                yield return new WaitForSeconds(0.5f);
-                sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            }
+            // Wait a bit for planet data
+            yield return new WaitForSeconds(0.5f);
 
-            var planetLoader = Managers.GetManager<PlanetLoader>();
-            while (planetLoader == null || !planetLoader.GetIsLoaded())
-            {
-                yield return new WaitForSeconds(0.5f);
-                planetLoader = Managers.GetManager<PlanetLoader>();
-            }
+            // Update planet name
+            _txtPlanetContent = $"Planet : {GetCurrentPlanetName()}";
 
+            // Start update loops
+            StartCoroutine(UpdateHudLoop());
+            StartETACoroutine();
+
+            _hudInitialized = true;
+            Plugin.Logger.LogInfo("[Epoch HUD] HUD initialized successfully.");
+        }
+
+        private void CreateHudElements()
+        {
             try
             {
-                string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-                if (currentScene.Contains("Humble") || currentScene.Contains("Toxicity")) _planetMaxDrillGoal = 8;
-                else if (currentScene.Contains("Selenea") || currentScene.Contains("Moon") || currentScene.Contains("Aqualis")) _planetMaxDrillGoal = 7;
-                else _planetMaxDrillGoal = 12;
-
                 _hudCanvasObject = new GameObject("EpochHudCanvas");
                 DontDestroyOnLoad(_hudCanvasObject);
                 _hudCanvas = _hudCanvasObject.AddComponent<Canvas>();
@@ -111,11 +110,10 @@ namespace EpochNeural
                 RectTransform rect = _panelObject.AddComponent<RectTransform>();
 
                 // Position at bottom-left, just above the vitals bars
-                // Adjusted: 5mm right (+25 pixels) and 15mm up (+75 pixels)
                 rect.anchorMin = new Vector2(0, 0);
                 rect.anchorMax = new Vector2(0, 0);
                 rect.pivot = new Vector2(0, 0);
-                rect.anchoredPosition = new Vector2(45, 195); // 25px right + 75px up from original (20, 120)
+                rect.anchoredPosition = new Vector2(45, 195);
                 rect.sizeDelta = new Vector2(500, 380);
 
                 _panelObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
@@ -153,14 +151,12 @@ namespace EpochNeural
                 _isVisible = true;
 
                 UpdateHudData(false, 0, 0, 0, 0, 0);
-                _txtPlanetContent = $"Planet : {GetCurrentPlanetName()}";
 
-                StartCoroutine(UpdateHudLoop());
-                StartETACoroutine();
+                Plugin.Logger.LogInfo("[Epoch HUD] HUD elements created.");
             }
             catch (Exception ex)
             {
-                Plugin.Logger.LogError($"[Epoch HUD] Initialization failed: {ex.Message}");
+                Plugin.Logger.LogError($"[Epoch HUD] Failed to create HUD elements: {ex.Message}");
             }
         }
 
@@ -198,29 +194,36 @@ namespace EpochNeural
         {
             while (true)
             {
-                if (_isVisible && _panelObject != null)
+                if (_isVisible && _panelObject != null && _hudInitialized)
                 {
-                    if (_txtHeader != null)
+                    try
                     {
-                        var tierData = EpochNeural.CurrentTierData;
-                        string tierName = tierData?.Name ?? "Epoch Hub";
-                        _txtHeader.text = $"Epoch Neural Network [{tierName}]";
+                        if (_txtHeader != null)
+                        {
+                            var tierData = EpochNeural.CurrentTierData;
+                            string tierName = tierData?.Name ?? "Epoch Hub";
+                            _txtHeader.text = $"Epoch Neural Network [{tierName}]";
+                        }
+                        if (_txtStatus != null)
+                        {
+                            _txtStatus.text = _txtStatusContent;
+                            _txtStatus.color = _statusColor;
+                        }
+                        if (_txtPlanet != null) _txtPlanet.text = _txtPlanetContent;
+                        if (_txtDiscovery != null) _txtDiscovery.text = _txtDiscoveryContent;
+                        if (_txtDrills != null) _txtDrills.text = _txtDrillsContent;
+                        if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
+                        if (_txtCount != null) _txtCount.text = _txtCountContent;
+                        if (_txtStackCap != null)
+                        {
+                            var tierData = EpochNeural.CurrentTierData;
+                            int stackCap = tierData?.StackCap ?? 25;
+                            _txtStackCap.text = $"Stack Cap            : {stackCap}";
+                        }
                     }
-                    if (_txtStatus != null)
+                    catch (Exception ex)
                     {
-                        _txtStatus.text = _txtStatusContent;
-                        _txtStatus.color = _statusColor;
-                    }
-                    if (_txtPlanet != null) _txtPlanet.text = _txtPlanetContent;
-                    if (_txtDiscovery != null) _txtDiscovery.text = _txtDiscoveryContent;
-                    if (_txtDrills != null) _txtDrills.text = _txtDrillsContent;
-                    if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
-                    if (_txtCount != null) _txtCount.text = _txtCountContent;
-                    if (_txtStackCap != null)
-                    {
-                        var tierData = EpochNeural.CurrentTierData;
-                        int stackCap = tierData?.StackCap ?? 25;
-                        _txtStackCap.text = $"Stack Cap            : {stackCap}";
+                        Plugin.Logger.LogWarning($"[Epoch HUD] Update loop error: {ex.Message}");
                     }
                 }
                 yield return new WaitForSeconds(0.2f);
@@ -235,7 +238,7 @@ namespace EpochNeural
             {
                 yield return new WaitForSeconds(ETA_UPDATE_INTERVAL);
 
-                if (_isVisible && _panelObject != null && _txtNextUpgrade != null)
+                if (_isVisible && _panelObject != null && _txtNextUpgrade != null && _hudInitialized)
                 {
                     UpdateETA();
                 }
@@ -246,6 +249,17 @@ namespace EpochNeural
         {
             try
             {
+                if (_txtNextUpgrade == null)
+                    return;
+
+                // Check if Hub is active - if not, show "ENTER HUB TO ACTIVATE"
+                if (!EpochVacuumSystem.IsInitialized() || EpochNeural.EpochHubInventory == null)
+                {
+                    _txtNextUpgrade.text = "Next Upgrade         : --";
+                    _txtNextUpgrade.color = RedColor;
+                    return;
+                }
+
                 if (EpochNeural.IsAtMaxTier())
                 {
                     _txtNextUpgrade.text = "Next Upgrade         : COMPLETE!";
@@ -265,6 +279,7 @@ namespace EpochNeural
                 if (worldUnitsHandler == null)
                 {
                     _txtNextUpgrade.text = "Next Upgrade         : --";
+                    _txtNextUpgrade.color = OrangeColor;
                     return;
                 }
 
@@ -272,6 +287,7 @@ namespace EpochNeural
                 if (terraUnit == null)
                 {
                     _txtNextUpgrade.text = "Next Upgrade         : --";
+                    _txtNextUpgrade.color = OrangeColor;
                     return;
                 }
 
@@ -302,11 +318,6 @@ namespace EpochNeural
                     if (purificationUnit != null) tiPerSecond += purificationUnit.GetIncreaseValuePersSec();
                 }
                 catch { }
-
-                _cachedCurrentTi = currentTi;
-                _cachedTiRate = tiPerSecond;
-                _cachedTargetTi = targetTi;
-                _cachedNextTierName = nextTier.Name;
 
                 if (tiPerSecond <= 0)
                 {
@@ -339,10 +350,15 @@ namespace EpochNeural
             }
             catch (Exception ex)
             {
-                Plugin.Logger.LogWarning($"[Epoch HUD] ETA update error: {ex.Message}");
+                // Only log if not a null reference (which happens when Hub isn't active)
+                if (!(ex is NullReferenceException))
+                {
+                    Plugin.Logger.LogWarning($"[Epoch HUD] ETA update error: {ex.Message}");
+                }
                 if (_txtNextUpgrade != null)
                 {
                     _txtNextUpgrade.text = "Next Upgrade         : --";
+                    _txtNextUpgrade.color = RedColor;
                 }
             }
         }
@@ -447,6 +463,8 @@ namespace EpochNeural
 
         public void UpdateHud(bool hubActive, int worldObjects, int containerItemCount)
         {
+            if (!_hudInitialized) return;
+
             int localAvailable = 0;
             int localLearned = 0;
 
@@ -469,7 +487,10 @@ namespace EpochNeural
                 {
                     StopCoroutine(_etaUpdateCoroutine);
                     _etaUpdateCoroutine = null;
-                    _txtNextUpgrade.text = "Next Upgrade         : --";
+                    if (_txtNextUpgrade != null)
+                    {
+                        _txtNextUpgrade.text = "Next Upgrade         : --";
+                    }
                 }
             }
 
@@ -565,6 +586,11 @@ namespace EpochNeural
                 Plugin.Logger.LogWarning($"[Epoch HUD] Could not get planet name: {ex.Message}");
             }
             return "Unknown";
+        }
+
+        public bool IsInitialized()
+        {
+            return _hudInitialized;
         }
     }
 
