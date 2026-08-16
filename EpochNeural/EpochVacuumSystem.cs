@@ -13,7 +13,7 @@ namespace EpochNeural
         // CONFIGURATION
         // ============================================================
 
-        private const float VacuumInterval = 30f;
+        private const float VacuumInterval = 5f;
 
         // ============================================================
         // RUNTIME STATE

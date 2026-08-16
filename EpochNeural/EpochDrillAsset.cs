@@ -39,20 +39,48 @@ namespace EpochNeural
                 return;
 
             // BASE GAME MATCHING: Clones the exact model mesh properties from the native T3 Ore Extractor
-            GroupConstructible template = GroupsHandler.GetGroupViaId("OreExtractor3") as GroupConstructible;
-            GroupDataConstructible templateData = template?.GetGroupData() as GroupDataConstructible;
+            GroupConstructible template =
+    GroupsHandler.GetGroupViaId("OreExtractor3") as GroupConstructible;
+
+            GroupDataConstructible templateData =
+                template?.GetGroupData() as GroupDataConstructible;
 
             if (templateData == null)
             {
-                Plugin.Logger?.LogError("[Epoch Drill] T3 Ore Extractor baseline asset model lookup failed.");
+                Plugin.Logger?.LogError(
+                    "[Epoch Drill] T3 Ore Extractor baseline asset model lookup failed.");
+
                 return;
             }
 
-            // Direct assignment property proxy injection to prevent inventory scroll layout distortion bugs
-            GroupConstructible epochDrill = new GroupConstructible(templateData)
-            {
-                id = DrillId
-            };
+            // ============================================================
+            // EPOCH UNLOCK OVERRIDE
+            // Clone the T3 data so the vanilla OreExtractor3 is untouched.
+            // Epoch Node Extractor unlocks at 1 mPa pressure.
+            // ============================================================
+
+            GroupDataConstructible epochDrillData =
+                UnityEngine.Object.Instantiate(templateData);
+
+            epochDrillData.unlockingWorldUnit =
+                DataConfig.WorldUnitType.Pressure;
+
+            epochDrillData.unlockingValue = 0.001f;
+
+            // If the T3 extractor uses a TerraformStage unlock,
+            // clear it so the Pressure requirement above is used.
+            epochDrillData.terraformStageUnlock = null;
+
+            Plugin.Logger?.LogInfo(
+                "[Epoch Drill] Unlock requirement overridden: " +
+                "1 mPa Pressure (0.001 Pa).");
+
+            // Create Epoch Node Extractor from the modified copy.
+            GroupConstructible epochDrill =
+                new GroupConstructible(epochDrillData)
+                {
+                    id = DrillId
+                };
 
             try { GroupBackingIdField?.SetValue(epochDrill, DrillId); } catch { }
 

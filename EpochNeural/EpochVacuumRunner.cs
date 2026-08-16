@@ -70,14 +70,27 @@ namespace EpochNeural
             // NEW: Refresh stacks and drill registry on load
             if (!_hasRefreshedOnLoad && EpochNeural.EpochHubInventory != null)
             {
-                // Refresh stack display
+                // ========================================================
+                // RESTORE TIER FIRST
+                // ========================================================
+                //
+                // The Hub inventory may contain stacks from a higher tier.
+                // Resolve the actual tier from the save's Terraformation
+                // BEFORE performing any overflow cleanup.
+                //
+                EpochNeural.RestoreTierFromTerraformation();
+
+                // Refresh stack display AFTER the correct tier is restored.
                 EpochHubLogistics.RefreshStacksOnLoad();
 
                 // Refresh drill registry
                 EpochDrillManager.RefreshRegistryFromWorld();
 
                 _hasRefreshedOnLoad = true;
-                Plugin.Logger?.LogInfo("[Epoch] Refreshed stacks and drill registry on load.");
+
+                Plugin.Logger?.LogInfo(
+                    $"[Epoch] Refreshed stacks and drill registry on load. " +
+                    $"Restored Tier: {EpochNeural.CurrentTier}");
             }
 
             try

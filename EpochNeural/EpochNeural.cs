@@ -462,5 +462,69 @@ namespace EpochNeural
             }
             catch { }
         }
+
+        // ============================================================
+        // RESTORE HUB TIER FROM CURRENT TERRAFORMATION
+        // ============================================================
+
+        internal static void RestoreTierFromTerraformation()
+        {
+            try
+            {
+                var worldUnitsHandler =
+                    Managers.GetManager<WorldUnitsHandler>();
+
+                if (worldUnitsHandler == null)
+                {
+                    Plugin.Logger?.LogWarning(
+                        "[Epoch] Could not restore Hub tier: WorldUnitsHandler unavailable.");
+
+                    return;
+                }
+
+                var terraUnit =
+                    worldUnitsHandler.GetUnit(
+                        DataConfig.WorldUnitType.Terraformation);
+
+                if (terraUnit == null)
+                {
+                    Plugin.Logger?.LogWarning(
+                        "[Epoch] Could not restore Hub tier: Terraformation unit unavailable.");
+
+                    return;
+                }
+
+                double currentTi = terraUnit.GetValue();
+
+                int resolvedTier = 1;
+
+                foreach (var tier in HubTiers)
+                {
+                    if (currentTi >= tier.UnlockTi)
+                    {
+                        resolvedTier = tier.Tier;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                if (_currentTier != resolvedTier)
+                {
+                    Plugin.Logger?.LogInfo(
+                        $"[Epoch] Restoring Hub tier from Terraformation: " +
+                        $"Tier {_currentTier} -> Tier {resolvedTier} " +
+                        $"(TI: {currentTi:F0})");
+                }
+
+                _currentTier = resolvedTier;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch] Failed to restore Hub tier: {ex.Message}");
+            }
+        }
     }
 }
