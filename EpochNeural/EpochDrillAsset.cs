@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -54,26 +54,27 @@ namespace EpochNeural
             }
 
             // ============================================================
-            // EPOCH UNLOCK OVERRIDE
-            // Clone the T3 data so the vanilla OreExtractor3 is untouched.
-            // Epoch Node Extractor unlocks at 1 mPa pressure.
+            // EPOCH DIRECT BUILD AVAILABILITY
+            // The Node Extractor is a core Epoch device, not a research item.
+            // Terraformation = 175000 Ti means the Node Extractor becomes available at Blue Sky.
+            // hideInCrafter = false keeps it directly visible in construction.
+            // Clear planet restrictions inherited from the T3 template.
             // ============================================================
-
             GroupDataConstructible epochDrillData =
                 UnityEngine.Object.Instantiate(templateData);
 
             epochDrillData.unlockingWorldUnit =
-                DataConfig.WorldUnitType.Pressure;
+                DataConfig.WorldUnitType.Terraformation;
 
-            epochDrillData.unlockingValue = 0.001f;
-
-            // If the T3 extractor uses a TerraformStage unlock,
-            // clear it so the Pressure requirement above is used.
+            epochDrillData.unlockingValue = 175000f;
             epochDrillData.terraformStageUnlock = null;
+            epochDrillData.hideInCrafter = false;
+            epochDrillData.unlockInPlanets = new List<PlanetData>();
+            epochDrillData.planetUsageType =
+                DataConfig.GroupPlanetUsageType.CanBeUsedOnAllPlanets;
 
             Plugin.Logger?.LogInfo(
-                "[Epoch Drill] Unlock requirement overridden: " +
-                "1 mPa Pressure (0.001 Pa).");
+                "[Epoch Drill] Terraforming unlock configured: Blue Sky (175000 Ti).");
 
             // Create Epoch Node Extractor from the modified copy.
             GroupConstructible epochDrill =

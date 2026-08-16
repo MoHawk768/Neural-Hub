@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using SpaceCraft;
 using UnityEngine;
@@ -144,6 +144,52 @@ namespace EpochNeural
             return isInZone;
         }
 
+        /// <summary>
+        /// Returns true when a Node Extractor belongs to the dedicated Landing Area slot.
+        /// The current map does not expose the intended Landing Area through the normal
+        /// sector lookup, so the same UnknownBiome -> Landing Area fallback used by
+        /// placement is centralized here and reused for save/load restoration.
+        /// </summary>
+        public static bool IsLandingAreaPosition(Vector3 position)
+        {
+            if (IsInLandingZone(position))
+                return true;
+
+            try
+            {
+                Type sectorsType = Type.GetType("SpaceCraft.SectorsHandler, Assembly-CSharp");
+                if (sectorsType != null)
+                {
+                    object sectorsHandler = UnityEngine.Object.FindFirstObjectByType(sectorsType);
+                    if (sectorsHandler != null)
+                    {
+                        var sector = sectorsType.GetMethod("GetSectorWithPosition")?.Invoke(
+                            sectorsHandler, new object[] { position });
+
+                        if (sector != null)
+                        {
+                            string sectorGroupId =
+                                sector.GetType().GetMethod("GetGroupId")?.Invoke(sector, null) as string;
+
+                            if (!string.IsNullOrEmpty(sectorGroupId) &&
+                                sectorGroupId != "UnknownBiome")
+                            {
+                                return sectorGroupId == "Landing Area";
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Drill] Landing Area sector check failed: {ex.Message}");
+            }
+
+            // Match the placement code's existing UnknownBiome -> Landing Area rule.
+            return true;
+        }
+
         // ============================================================
         // NEW: Refresh registry from world objects on game load
         // ============================================================
@@ -175,7 +221,7 @@ namespace EpochNeural
                 // ============================================================
                 // FIX: Determine biome name - Check Landing Zone FIRST
                 // ============================================================
-                bool isInLandingZone = IsInLandingZone(position);
+                bool isInLandingZone = IsLandingAreaPosition(position);
                 string biomeName;
 
                 if (isInLandingZone)
@@ -260,7 +306,7 @@ namespace EpochNeural
         {
             if (string.IsNullOrEmpty(sectorGroupId))
             {
-                if (IsInLandingZone(position))
+                if (IsLandingAreaPosition(position))
                 {
                     Plugin.Logger?.LogInfo($"[Epoch Network] Drill [{worldObjectId}] placed in Landing Zone.");
                     return TryRegisterLandingZoneDrill(worldObjectId);

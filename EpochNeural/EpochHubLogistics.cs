@@ -493,7 +493,7 @@ namespace EpochNeural
             if (!IsEpochHubInventory(inventory))
                 return;
 
-            if (__instance.gameObject.GetComponent<DirectInventoryScroller>() == null)
+            if (__instance.gameObject.GetComponent<EpochUI.DirectInventoryScroller>() == null)
                 return;
 
             RefreshCompressedStacks();
@@ -592,30 +592,38 @@ namespace EpochNeural
     [HarmonyPatch]
     internal static class EpochHubScrollerCoordinator
     {
-        [HarmonyPatch(typeof(DirectInventoryScroller), "LateUpdate")]
+        [HarmonyPatch(typeof(EpochUI.DirectInventoryScroller), "LateUpdate")]
         [HarmonyPostfix]
-        private static void PostfixLateUpdateSync(DirectInventoryScroller __instance)
+        private static void PostfixLateUpdateSync(EpochUI.DirectInventoryScroller __instance)
         {
             if (EpochNeural.EpochHubInventory == null) return;
 
-            GridLayoutGroup grid = __instance.GetComponentInChildren<GridLayoutGroup>(true);
+            GridLayoutGroup grid =
+                __instance.GetComponentInChildren<GridLayoutGroup>(true);
+
             if (grid == null) return;
 
             int slotCount = grid.transform.childCount;
-            var compressedData = EpochHubLogistics.ActiveFrameCompressedStacks;
+            var compressedData =
+                EpochHubLogistics.ActiveFrameCompressedStacks;
 
             // Also refresh compressed stacks if they're empty but the inventory has items
-            if ((compressedData == null || compressedData.Count == 0) && EpochNeural.EpochHubInventory.GetInsideWorldObjects().Count > 0)
+            if ((compressedData == null || compressedData.Count == 0) &&
+                EpochNeural.EpochHubInventory.GetInsideWorldObjects().Count > 0)
             {
                 EpochHubLogistics.RefreshCompressedStacks();
-                compressedData = EpochHubLogistics.ActiveFrameCompressedStacks;
+                compressedData =
+                    EpochHubLogistics.ActiveFrameCompressedStacks;
             }
 
             for (int i = 0; i < slotCount; i++)
             {
-                GameObject slotGo = grid.transform.GetChild(i).gameObject;
+                GameObject slotGo =
+                    grid.transform.GetChild(i).gameObject;
 
-                EpochStackCounter counter = slotGo.GetComponent<EpochStackCounter>();
+                EpochStackCounter counter =
+                    slotGo.GetComponent<EpochStackCounter>();
+
                 if (counter == null)
                 {
                     counter = slotGo.AddComponent<EpochStackCounter>();
@@ -630,8 +638,6 @@ namespace EpochNeural
                     counter.SetCount(0);
                 }
             }
-
-            EpochUI.LiftMasterCanvasVeil(__instance);
         }
     }
 }

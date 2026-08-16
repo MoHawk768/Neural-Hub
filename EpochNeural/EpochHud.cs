@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using TMPro;
@@ -20,7 +20,9 @@ namespace EpochNeural
         private TextMeshProUGUI _txtStatus;
         private TextMeshProUGUI _txtPlanet;
         private TextMeshProUGUI _txtDiscovery;
-        private TextMeshProUGUI _txtDrills;
+        private TextMeshProUGUI _txtDrillHeader;
+        private TextMeshProUGUI _txtMapDrills;
+        private TextMeshProUGUI _txtLandingDrill;
         private TextMeshProUGUI _txtLeft;
         private TextMeshProUGUI _txtCount;
         private TextMeshProUGUI _txtStackCap;
@@ -31,7 +33,9 @@ namespace EpochNeural
         private Color _statusColor = new Color(1.0f, 0.2f, 0.2f);
         private string _txtPlanetContent = "Planet : Unknown";
         private string _txtDiscoveryContent = "Biome Resource Discovered: 0 / 0";
-        private string _txtDrillsContent = "Active Node Extractors   : 0 / 0";
+        private string _txtDrillHeaderContent = "NODE EXTRACTORS";
+        private string _txtMapDrillsContent = "Map: 0 / 0";
+        private string _txtLandingDrillContent = "Landing: 0 / 1";
         private string _txtLeftContent = "Biome Resources Left : 0";
         private string _txtCountContent = "Hub Item Count       : 0";
         private bool _isVisible = true;
@@ -71,42 +75,21 @@ namespace EpochNeural
 
         private IEnumerator InitializeHudRoutine()
         {
-            // ============================================================
-            // WAIT FOR AN ACTUAL GAME WORLD
-            // Do not show Epoch HUD on splash/main menu/save selection.
-            // ============================================================
-
-            PlayerMainController player = null;
-
-            while (player == null)
+            // Do not create/show the Epoch HUD on the splash screen,
+            // main menu, save-selection screen, or other non-world UI.
+            // A real player + current planet must exist first.
+            while (!IsGameWorldReady())
             {
-                var playersManager = Managers.GetManager<PlayersManager>();
-
-                if (playersManager != null)
-                {
-                    player = playersManager.GetActivePlayerController();
-                }
-
-                if (player == null)
-                {
-                    yield return new WaitForSeconds(0.25f);
-                }
+                yield return new WaitForSeconds(0.25f);
             }
 
-            // Player now exists in a loaded save/world.
-            // Give the game UI a brief moment to finish initializing.
+            // Give the game UI a moment to finish attaching the player/world.
             yield return new WaitForSeconds(0.5f);
 
-            // Create Epoch HUD only now.
             CreateHudElements();
 
-            // Wait a little for planet/world data.
-            yield return new WaitForSeconds(0.5f);
-
-            // Update planet name
             _txtPlanetContent = $"Planet : {GetCurrentPlanetName()}";
 
-            // Start update loops
             StartCoroutine(UpdateHudLoop());
             StartETACoroutine();
 
@@ -137,12 +120,12 @@ namespace EpochNeural
                 rect.anchorMax = new Vector2(0, 0);
                 rect.pivot = new Vector2(0, 0);
                 rect.anchoredPosition = new Vector2(45, 195);
-                rect.sizeDelta = new Vector2(500, 380);
+                rect.sizeDelta = new Vector2(620, 430);
 
                 _panelObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
 
                 // Status line - bold red, above header
-                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(0, 0), 22, RedColor);
+                _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(0, 0), 24, RedColor);
                 _txtStatus.text = _txtStatusContent;
                 _txtStatus.fontStyle = FontStyles.Bold;
                 _txtStatus.alignment = TextAlignmentOptions.TopLeft;
@@ -151,22 +134,31 @@ namespace EpochNeural
                 statusRect.sizeDelta = new Vector2(-30, 35);
 
                 // Header with tier name
-                _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -45), 20, GoldColor);
+                _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -45), 22, GoldColor);
                 _txtHeader.text = "Epoch Neural Network";
                 _txtHeader.fontStyle = FontStyles.Bold;
                 _txtHeader.alignment = TextAlignmentOptions.TopLeft;
 
-                _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -77), 16, GreenColor);
+                _txtPlanet = CreateGenericTextObject("LinePlanet", new Vector2(15, -77), 18, GreenColor);
                 _txtPlanet.text = "Planet : Unknown";
 
-                _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -105), 16, GreenColor);
-                _txtDrills = CreateGenericTextObject("Line3", new Vector2(15, -133), 16, GreenColor);
-                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -161), 16, GreenColor);
-                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -189), 16, GreenColor);
-                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -217), 16, GreenColor);
-                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -245), 16, CyanColor);
+                _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -105), 18, GreenColor);
 
-                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -285), 16, BrightGreenColor);
+                // Node Extractor telemetry is deliberately split into separate rows.
+                // This prevents the Map/Landing values from overlapping the following
+                // resource and inventory rows on different screen scales.
+                _txtDrillHeader = CreateGenericTextObject("LineDrillHeader", new Vector2(15, -133), 18, BrightGreenColor);
+                _txtDrillHeader.fontStyle = FontStyles.Bold;
+
+                _txtMapDrills = CreateGenericTextObject("LineMapDrills", new Vector2(15, -157), 17, GreenColor);
+                _txtLandingDrill = CreateGenericTextObject("LineLandingDrill", new Vector2(15, -180), 17, GreenColor);
+
+                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -207), 18, GreenColor);
+                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -235), 18, GreenColor);
+                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -263), 18, GreenColor);
+                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -291), 18, CyanColor);
+
+                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -330), 18, BrightGreenColor);
                 _txtNotification.text = "";
                 _txtNotification.gameObject.SetActive(false);
 
@@ -192,7 +184,7 @@ namespace EpochNeural
             rect.anchorMax = new Vector2(1, 1);
             rect.pivot = new Vector2(0, 1);
             rect.anchoredPosition = anchoredPosition;
-            rect.sizeDelta = new Vector2(-30, 28);
+            rect.sizeDelta = new Vector2(-30, 24);
 
             TextMeshProUGUI tmp = textObj.AddComponent<TextMeshProUGUI>();
             TMP_FontAsset fontAsset = FontAssetHelper.GetDefaultFont();
@@ -200,6 +192,8 @@ namespace EpochNeural
             tmp.fontSize = size;
             tmp.color = c;
             tmp.alignment = TextAlignmentOptions.TopLeft;
+            tmp.enableWordWrapping = false;
+            tmp.overflowMode = TextOverflowModes.Overflow;
             tmp.text = "...";
             return tmp;
         }
@@ -217,8 +211,22 @@ namespace EpochNeural
         {
             while (true)
             {
-                if (_isVisible && _panelObject != null && _hudInitialized)
+                if (_panelObject != null && _hudInitialized)
                 {
+                    bool worldReady = IsGameWorldReady();
+
+                    if (!worldReady)
+                    {
+                        if (_panelObject.activeSelf)
+                            _panelObject.SetActive(false);
+                    }
+                    else if (_isVisible && !_panelObject.activeSelf)
+                    {
+                        _panelObject.SetActive(true);
+                    }
+
+                    if (worldReady && _isVisible)
+                    {
                     try
                     {
                         if (_txtHeader != null)
@@ -234,7 +242,9 @@ namespace EpochNeural
                         }
                         if (_txtPlanet != null) _txtPlanet.text = _txtPlanetContent;
                         if (_txtDiscovery != null) _txtDiscovery.text = _txtDiscoveryContent;
-                        if (_txtDrills != null) _txtDrills.text = _txtDrillsContent;
+                        if (_txtDrillHeader != null) _txtDrillHeader.text = _txtDrillHeaderContent;
+                        if (_txtMapDrills != null) _txtMapDrills.text = _txtMapDrillsContent;
+                        if (_txtLandingDrill != null) _txtLandingDrill.text = _txtLandingDrillContent;
                         if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
                         if (_txtCount != null) _txtCount.text = _txtCountContent;
                         if (_txtStackCap != null)
@@ -247,6 +257,7 @@ namespace EpochNeural
                     catch (Exception ex)
                     {
                         Plugin.Logger.LogWarning($"[Epoch HUD] Update loop error: {ex.Message}");
+                    }
                     }
                 }
                 yield return new WaitForSeconds(0.2f);
@@ -486,12 +497,16 @@ namespace EpochNeural
 
         public void UpdateHud(bool hubActive, int worldObjects, int containerItemCount)
         {
-            if (!_hudInitialized) return;
+            if (!_hudInitialized || !IsGameWorldReady()) return;
 
             int localAvailable = 0;
             int localLearned = 0;
 
-            int placedDrillsCount = EpochDrillManager.GetActiveDrillsCount();
+            // Keep map/biome extractors and the single Landing Area extractor separate.
+            // GetActiveDrillsCount() intentionally combines them for placement limits,
+            // but the HUD should not combine them.
+            int mapDrillsCount = EpochDrillManager.GetActiveBiomeDrillsCount();
+            bool landingDrillPresent = EpochDrillManager.IsLandingZoneOccupied();
 
             if (hubActive)
             {
@@ -559,18 +574,34 @@ namespace EpochNeural
                 Plugin.Logger.LogWarning($"[Epoch HUD] Update error: {ex.Message}");
             }
 
-            UpdateHudData(hubActive, worldObjects, containerItemCount, localLearned, localAvailable, placedDrillsCount);
+            UpdateHudData(hubActive, worldObjects, containerItemCount, localLearned, localAvailable, 0);
         }
 
         public void UpdateHudData(bool active, int left, int count, int learned, int available, int activeDrills)
         {
-            if (_panelObject != null && !_panelObject.activeSelf)
+            if (!IsGameWorldReady())
+            {
+                if (_panelObject != null)
+                    _panelObject.SetActive(false);
+                return;
+            }
+
+            if (_panelObject != null && !_panelObject.activeSelf && _isVisible)
             {
                 _panelObject.SetActive(true);
             }
 
             _txtDiscoveryContent = $"Biome Resource Discovered: {learned} / {available}";
-            _txtDrillsContent = $"Active Node Extractors   : {activeDrills} / {_planetMaxDrillGoal}";
+
+            // The 'activeDrills' parameter is retained for compatibility with existing
+            // callers. We deliberately read the two registry states directly here.
+            int mapDrills = EpochDrillManager.GetActiveBiomeDrillsCount();
+            bool landingDrill = EpochDrillManager.IsLandingZoneOccupied();
+
+            _txtDrillHeaderContent = "NODE EXTRACTORS";
+            _txtMapDrillsContent = $"Map: {mapDrills} / {_planetMaxDrillGoal}";
+            _txtLandingDrillContent = $"Landing: {(landingDrill ? 1 : 0)} / 1";
+
             _txtLeftContent = $"Biome Resources Left : {left:N0}";
             _txtCountContent = $"Hub Item Count       : {count:N0}";
         }
@@ -584,6 +615,28 @@ namespace EpochNeural
         // ============================================================
         // HELPER METHODS
         // ============================================================
+
+        private bool IsGameWorldReady()
+        {
+            try
+            {
+                var playersManager = Managers.GetManager<PlayersManager>();
+                var player = playersManager?.GetActivePlayerController();
+                if (player == null)
+                    return false;
+
+                var planetLoader = Managers.GetManager<PlanetLoader>();
+                var planetData = planetLoader?.GetCurrentPlanetData();
+                if (planetData == null || string.IsNullOrEmpty(planetData.id))
+                    return false;
+
+                return WorldObjectsHandler.Instance != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         private string GetCurrentPlanetName()
         {

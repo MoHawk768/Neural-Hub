@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using SpaceCraft;
@@ -46,7 +46,7 @@ namespace EpochNeural
                 Vector3 position = ghost.transform.position;
 
                 // Check if in landing zone
-                bool isInLandingZone = EpochDrillManager.IsInLandingZone(position);
+                bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
 
                 if (isInLandingZone)
                 {
@@ -119,26 +119,51 @@ namespace EpochNeural
         {
             try
             {
-                // Find the most recently placed drill
+                // Find the newest UNREGISTERED Epoch Node Extractor.
+                //
+                // IMPORTANT:
+                // PlayerBuilder.OnConstructed fires for EVERY object the player
+                // builds, not just Node Extractors. The old code searched for the
+                // newest drill every time, found an already-installed drill, tried
+                // to register it again, failed because the landing/biome slot was
+                // already occupied, and then DESTROYED the existing drill.
+                //
+                // Only process a drill whose WorldObject ID is not already in the
+                // Epoch drill registry.
                 var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
                 if (constructedObjects == null)
                     return;
 
                 WorldObject latestDrill = null;
+                var activeRegistry = EpochDrillManager.GetActiveDrillRegistry();
+
                 foreach (var wo in constructedObjects)
                 {
-                    if (wo?.GetGroup()?.GetId() == "Epoch_Node_Drill")
-                    {
-                        if (latestDrill == null || wo.GetId() > latestDrill.GetId())
-                            latestDrill = wo;
-                    }
+                    if (wo?.GetGroup()?.GetId() != "Epoch_Node_Drill")
+                        continue;
+
+                    int woId = wo.GetId();
+
+                    // Already registered as a biome extractor.
+                    if (activeRegistry != null && activeRegistry.ContainsValue(woId))
+                        continue;
+
+                    // Already registered as the landing-area extractor.
+                    if (EpochDrillManager.IsLandingZoneDrill(woId))
+                        continue;
+
+                    // This is an unregistered drill. Keep the newest one.
+                    if (latestDrill == null || woId > latestDrill.GetId())
+                        latestDrill = wo;
                 }
 
+                // OnConstructed was triggered by a non-drill build, or there are
+                // no newly placed drills to register. Nothing to do.
                 if (latestDrill == null)
                     return;
 
                 Vector3 position = latestDrill.GetPosition();
-                bool isInLandingZone = EpochDrillManager.IsInLandingZone(position);
+                bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
 
                 // Get biome name
                 string biomeName = "Landing Area";
@@ -149,8 +174,12 @@ namespace EpochNeural
                         biomeName = "Landing Area";
                 }
 
-                // Register the drill
-                bool registered = EpochDrillManager.TryRegisterDrill(biomeName, latestDrill.GetId(), position);
+                // Register the drill.
+                // Landing Area is a separate registry slot. Passing "Landing Area"
+                // as a normal biome makes it count as Map 1/20 instead of Landing 1/1.
+                bool registered = isInLandingZone
+                    ? EpochDrillManager.TryRegisterDrill(null, latestDrill.GetId(), position)
+                    : EpochDrillManager.TryRegisterDrill(biomeName, latestDrill.GetId(), position);
 
                 if (registered)
                 {
@@ -248,7 +277,7 @@ namespace EpochNeural
                 if (string.IsNullOrEmpty(biomeName) || biomeName == "Unknown Area")
                 {
                     Vector3 position = worldObject.GetPosition();
-                    bool isInLandingZone = EpochDrillManager.IsInLandingZone(position);
+                    bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
                     if (isInLandingZone)
                     {
                         biomeName = "Landing Area";

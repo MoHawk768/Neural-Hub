@@ -1,6 +1,10 @@
-﻿using UnityEngine;
+using UnityEngine;
+using UnityEngine.UI;
 using SpaceCraft;
 using HarmonyLib;
+using System;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace EpochNeural
 {
@@ -27,7 +31,19 @@ namespace EpochNeural
         private static readonly Color ZeoliteSpecular = new Color(0.90f, 0.88f, 0.85f, 1.0f);
 
         private int framesToWait = 15;
+
+        // ============================================================
+        // EPOCH HUB PHYSICAL SCREEN
+        // ============================================================
+        private Image _physicalGroupImage;
+        private Inventory _hubInventory;
+        private Coroutine _screenCoroutine;
+        private Sprite _originalScreenSprite;
+        private bool _originalSpriteCaptured;
+        private const float ScreenCycleSeconds = 3f;
+
         private int enforcementCycles = 120;
+        private bool _visualsLocked = false;
         private Material _zeoliteMat;
 
         private Material CreateZeoliteMaterial()
@@ -79,29 +95,341 @@ namespace EpochNeural
             // Keep it subtle (only 15% intensity shift)
             return Color.Lerp(ZeoliteBase, shimmer, 0.15f);
         }
-
-        private void FixedUpdate()
+        private void Start()
         {
-            if (framesToWait > 0)
+            StartCoroutine(InitializePhysicalScreen());
+        }
+
+        private IEnumerator InitializePhysicalScreen()
+        {
+            // EpochUI already assigns the active Hub inventory when the
+            // container is opened. Use that as the authoritative source.
+            _hubInventory = EpochNeural.EpochHubInventory;
+
+            // Keep InventoryAssociated as a fallback for world-object
+            // initialization, but do not depend on it.
+            if (_hubInventory == null)
             {
-                framesToWait--;
+                InventoryAssociated inventoryAssociated =
+                    GetComponentInParent<InventoryAssociated>();
+
+                if (inventoryAssociated == null)
+                {
+                    inventoryAssociated = GetComponent<InventoryAssociated>();
+                }
+
+                if (inventoryAssociated != null)
+                {
+                    inventoryAssociated.GetInventory(OnHubInventoryReady);
+                }
+            }
+
+            yield return null;
+
+            FindPhysicalScreen();
+
+            float timeout = Time.time + 5f;
+
+            while (_hubInventory == null &&
+                   Time.time < timeout)
+            {
+                _hubInventory = EpochNeural.EpochHubInventory;
+                yield return new WaitForSeconds(0.25f);
+            }
+
+            if (_physicalGroupImage == null)
+            {
+                FindPhysicalScreen();
+            }
+
+            if (_physicalGroupImage != null &&
+                _screenCoroutine == null)
+            {
+                _screenCoroutine =
+                    StartCoroutine(PhysicalScreenCycler());
+
+                Plugin.Logger?.LogInfo(
+                    "[Epoch Screen] Physical Hub display cycling started.");
+            }
+            else if (_physicalGroupImage == null)
+            {
+                Plugin.Logger?.LogWarning(
+                    "[Epoch Screen] Physical GroupImage could not be found.");
+            }
+        }
+
+        private void OnHubInventoryReady(Inventory inventory)
+        {
+            if (inventory == null)
+                return;
+
+            _hubInventory = inventory;
+            EpochNeural.EpochHubInventory = inventory;
+
+            Plugin.Logger?.LogInfo(
+                "[Epoch Screen] Hub inventory linked to physical display.");
+        }
+
+        private void FindPhysicalScreen()
+        {
+            Transform groupImageTransform =
+                FindDeepChild(transform, "GroupImage");
+
+            if (groupImageTransform == null)
+            {
+                Plugin.Logger?.LogWarning(
+                    "[Epoch Screen] GroupImage not found under Epoch Hub Container.");
                 return;
             }
 
-            try
+            Image image =
+                groupImageTransform.GetComponent<Image>();
+
+            if (image == null)
             {
-                ExecuteSkinningPipeline();
-            }
-            catch (System.Exception ex)
-            {
-                Plugin.Logger.LogError($"[Epoch Visuals] Rendering pipeline exception: {ex}");
+                Plugin.Logger?.LogWarning(
+                    "[Epoch Screen] GroupImage exists but has no Image component.");
+                return;
             }
 
-            enforcementCycles--;
-            if (enforcementCycles <= 0)
+            _physicalGroupImage = image;
+
+            if (!_originalSpriteCaptured)
             {
-                Plugin.Logger.LogInfo("[Epoch Visuals] Zeolite with Pearl Shimmer locked.");
-                Destroy(this);
+                _originalScreenSprite = image.sprite;
+                _originalSpriteCaptured = true;
+            }
+
+            Plugin.Logger?.LogInfo(
+                "[Epoch Screen] Physical target found: " +
+                GetTransformPath(groupImageTransform));
+        }
+
+        private static Transform FindDeepChild(
+    Transform parent,
+    string childName)
+        {
+            if (parent == null)
+                return null;
+
+            foreach (Transform child in parent)
+            {
+                if (child == null)
+                    continue;
+
+                if (child.name == childName)
+                    return child;
+
+                Transform result =
+                    FindDeepChild(child, childName);
+
+                if (result != null)
+                    return result;
+            }
+
+            return null;
+        }
+
+        private IEnumerator PhysicalScreenCycler()
+        {
+            int currentStackIndex = 0;
+
+            while (true)
+            {
+                yield return new WaitForSeconds(ScreenCycleSeconds);
+
+                try
+                {
+                    if (_physicalGroupImage == null)
+                    {
+                        FindPhysicalScreen();
+
+                        if (_physicalGroupImage == null)
+                            continue;
+                    }
+
+                    // IMPORTANT:
+                    // GetInsideWorldObjects() contains every physical item.
+                    // That means 416 individual items can exist even though
+                    // the Hub UI displays them as a much smaller number of
+                    // compressed stacks.
+                    //
+                    // The outside screen must follow the SAME compressed
+                    // stack model as the Hub UI, so we use
+                    // ActiveFrameCompressedStacks here.
+                    var compressedStacks =
+                        EpochHubLogistics.ActiveFrameCompressedStacks;
+
+                    if (compressedStacks == null || compressedStacks.Count == 0)
+                    {
+                        EpochHubLogistics.RefreshCompressedStacks();
+                        compressedStacks =
+                            EpochHubLogistics.ActiveFrameCompressedStacks;
+                    }
+
+                    if (compressedStacks == null || compressedStacks.Count == 0)
+                    {
+                        currentStackIndex = 0;
+
+                        if (_originalSpriteCaptured)
+                        {
+                            _physicalGroupImage.sprite =
+                                _originalScreenSprite;
+                        }
+
+                        Plugin.Logger?.LogInfo(
+                            "[Epoch Screen] Cycle tick: Hub has no compressed stacks.");
+
+                        continue;
+                    }
+
+                    // The compressed list represents actual occupied
+                    // inventory stacks. One screen step = one stack.
+                    if (currentStackIndex >= compressedStacks.Count)
+                    {
+                        currentStackIndex = 0;
+                    }
+
+                    var currentStack =
+                        compressedStacks[currentStackIndex];
+
+                    WorldObject currentItem = currentStack.wo;
+                    int stackCount = currentStack.count;
+
+                    if (currentItem == null)
+                    {
+                        Plugin.Logger?.LogWarning(
+                            $"[Epoch Screen] Compressed stack " +
+                            $"{currentStackIndex} has no WorldObject.");
+
+                        currentStackIndex++;
+
+                        if (currentStackIndex >= compressedStacks.Count)
+                            currentStackIndex = 0;
+
+                        continue;
+                    }
+
+                    Group group = currentItem.GetGroup();
+
+                    if (group == null)
+                    {
+                        Plugin.Logger?.LogWarning(
+                            $"[Epoch Screen] Compressed stack " +
+                            $"{currentStackIndex} has no Group.");
+
+                        currentStackIndex++;
+
+                        if (currentStackIndex >= compressedStacks.Count)
+                            currentStackIndex = 0;
+
+                        continue;
+                    }
+
+                    Sprite icon = group.GetImage();
+
+                    if (icon == null)
+                    {
+                        var groupData = group.GetGroupData();
+
+                        if (groupData != null)
+                        {
+                            icon = groupData.icon;
+                        }
+                    }
+
+                    string resourceId =
+                        group.GetId() ?? "unknown";
+
+                    if (icon != null)
+                    {
+                        _physicalGroupImage.sprite = icon;
+                        _physicalGroupImage.color =
+                            new Color(1f, 1f, 1f, 1f);
+                        _physicalGroupImage.preserveAspect = true;
+
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Screen] Display -> {resourceId} " +
+                            $"STACK {currentStackIndex + 1}/" +
+                            $"{compressedStacks.Count} " +
+                            $"COUNT {stackCount}");
+                    }
+                    else
+                    {
+                        Plugin.Logger?.LogWarning(
+                            $"[Epoch Screen] Icon is NULL for {resourceId} " +
+                            $"at compressed stack " +
+                            $"{currentStackIndex + 1}/" +
+                            $"{compressedStacks.Count}.");
+                    }
+
+                    // Advance exactly ONE compressed stack.
+                    currentStackIndex++;
+
+                    if (currentStackIndex >= compressedStacks.Count)
+                    {
+                        currentStackIndex = 0;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Logger?.LogError(
+                        $"[Epoch Screen] Cycle error: {ex}");
+
+                    currentStackIndex = 0;
+                }
+            }
+        }
+
+        private static string GetTransformPath(Transform target)
+        {
+            if (target == null)
+                return "<null>";
+
+            string path = target.name;
+            Transform current = target.parent;
+
+            while (current != null)
+            {
+                path = current.name + "/" + path;
+                current = current.parent;
+            }
+
+            return path;
+        }
+
+
+
+        private void FixedUpdate()
+        {
+            // The visual material only needs to be enforced for the initial
+            // setup period.  DO NOT destroy this component afterwards:
+            // the same component owns the physical Hub screen cycler.
+            if (!_visualsLocked)
+            {
+                if (framesToWait > 0)
+                {
+                    framesToWait--;
+                    return;
+                }
+
+                try
+                {
+                    ExecuteSkinningPipeline();
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Logger.LogError($"[Epoch Visuals] Rendering pipeline exception: {ex}");
+                }
+
+                enforcementCycles--;
+
+                if (enforcementCycles <= 0)
+                {
+                    _visualsLocked = true;
+                    Plugin.Logger.LogInfo(
+                        "[Epoch Visuals] Zeolite with Pearl Shimmer locked; physical screen controller remains active.");
+                }
             }
         }
 
@@ -218,5 +546,7 @@ namespace EpochNeural
             }
             return null;
         }
+
+
     }
 }
