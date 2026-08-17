@@ -20,15 +20,34 @@ namespace EpochNeural
         internal static List<(WorldObject wo, int count, List<WorldObject> items)> ActiveFrameCompressedStacks = new List<(WorldObject, int, List<WorldObject>)>();
 
         private static FieldInfo _inventoryDisplayerInventoryField;
+        private static MethodInfo _inventoryDisplayerTrueRefreshContentMethod;
         private static bool _hasPerformedCleanup = false;
+
+        // Tracks the stack-cap version currently represented by the Hub UI.
+        internal static int _lastUiStackCap = -1;
+        private static bool _uiRefreshInProgress = false;
 
         static EpochHubLogistics()
         {
             try
             {
-                _inventoryDisplayerInventoryField = typeof(InventoryDisplayer).GetField("_inventory", BindingFlags.Instance | BindingFlags.NonPublic);
+                _inventoryDisplayerInventoryField =
+                    typeof(InventoryDisplayer).GetField(
+                        "_inventory",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+
+                _inventoryDisplayerTrueRefreshContentMethod =
+                    typeof(InventoryDisplayer).GetMethod(
+                        "TrueRefreshContent",
+                        BindingFlags.Instance |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Hub] Failed to cache InventoryDisplayer refresh method: {ex.Message}");
+            }
         }
 
         public static int GetCurrentStackCap()
@@ -37,12 +56,83 @@ namespace EpochNeural
             return tierData?.StackCap ?? 25;
         }
 
+        // Resolve the Hub tier from the loaded world's Terraformation value
+        // before any Hub UI stack representation is built.
+        internal static bool ResolveSavedTierBeforeHubUi()
+        {
+            try
+            {
+                var worldUnitsHandler =
+                    Managers.GetManager<WorldUnitsHandler>();
+
+                if (worldUnitsHandler == null)
+                    return false;
+
+                var terraUnit =
+                    worldUnitsHandler.GetUnit(
+                        DataConfig.WorldUnitType.Terraformation);
+
+                if (terraUnit == null)
+                    return false;
+
+                double currentTi = terraUnit.GetValue();
+
+                int resolvedTier = 1;
+
+                foreach (var tier in EpochNeural.HubTiers)
+                {
+                    if (currentTi >= tier.UnlockTi)
+                        resolvedTier = tier.Tier;
+                }
+
+                if (resolvedTier != EpochNeural.CurrentTier)
+                {
+                    FieldInfo tierField =
+                        typeof(EpochNeural).GetField(
+                            "_currentTier",
+                            BindingFlags.NonPublic |
+                            BindingFlags.Static);
+
+                    if (tierField != null)
+                    {
+                        tierField.SetValue(null, resolvedTier);
+
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Hub] Saved-game tier resolved before UI: " +
+                            $"Tier {resolvedTier} (TI={currentTi:0})");
+                    }
+                }
+
+                _cachedStackCap = GetCurrentStackCap();
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Hub] Could not resolve saved-game tier before UI: {ex.Message}");
+
+                return false;
+            }
+        }
+
         public static void RefreshStackCap()
         {
+            int previousCap = _cachedStackCap;
+
             _cachedStackCap = GetCurrentStackCap();
-            _hasPerformedCleanup = false; // Reset cleanup flag so it runs again on next open
+            _hasPerformedCleanup = false;
+
             RefreshCompressedStacks();
-            Plugin.Logger?.LogInfo($"[Epoch Hub] Stack cap updated to {_cachedStackCap}");
+
+            Plugin.Logger?.LogInfo(
+                $"[Epoch Hub] Stack cap updated to {_cachedStackCap}");
+
+            // Only rebuild the visual Hub when the cap actually changed.
+            if (previousCap != _cachedStackCap)
+            {
+                RefreshHubVisualImmediately();
+            }
         }
 
         private static string StackKey(WorldObject wo)
@@ -320,17 +410,82 @@ namespace EpochNeural
                 stackCap);
         }
 
+        internal static void RefreshHubVisualImmediately()
+        {
+            if (_uiRefreshInProgress)
+                return;
+
+            if (EpochNeural.EpochHubInventory == null)
+                return;
+
+            if (_inventoryDisplayerTrueRefreshContentMethod == null)
+                return;
+
+            try
+            {
+                var displayers =
+                    UnityEngine.Object.FindObjectsByType<InventoryDisplayer>(
+                        FindObjectsSortMode.None);
+
+                foreach (InventoryDisplayer displayer in displayers)
+                {
+                    if (displayer == null)
+                        continue;
+
+                    Inventory inventory = GetInventoryFromDisplayer(displayer);
+
+                    if (!IsEpochHubInventory(inventory))
+                        continue;
+
+                    _uiRefreshInProgress = true;
+
+                    // Rebuild the vanilla inventory presentation.
+                    // Our SetInventoryBlocks Harmony prefix will then replace
+                    // the raw Hub objects with Epoch compressed stacks.
+                    _inventoryDisplayerTrueRefreshContentMethod.Invoke(
+                        displayer,
+                        null);
+
+                    _lastUiStackCap = GetCurrentStackCap();
+
+                    Plugin.Logger?.LogInfo(
+                        $"[Epoch Hub] UI rebuilt automatically for stack cap {_lastUiStackCap}.");
+
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Hub] Automatic UI refresh failed: {ex.Message}");
+            }
+            finally
+            {
+                _uiRefreshInProgress = false;
+            }
+        }
+
         internal static void RefreshStacksOnLoad()
         {
             if (EpochNeural.EpochHubInventory == null)
                 return;
 
-            // Run cleanup on load to fix any overflow from saved games
-            CleanupOverflowItems();
+            // IMPORTANT:
+            // Never eject items during save loading.
+            // The Hub tier may not have been restored yet, which can
+            // temporarily report an incorrect stack cap and cause
+            // massive item loss.
+
+            // Resolve the saved world's actual tier BEFORE the first
+            // compressed-stack build. This prevents a Tier 2+ save from
+            // being temporarily represented using the Tier 1 stack cap.
+            ResolveSavedTierBeforeHubUi();
 
             RefreshStackCap();
             RefreshCompressedStacks();
-            Plugin.Logger?.LogInfo("[Epoch Hub] Stacks refreshed on load.");
+
+            Plugin.Logger?.LogInfo(
+                "[Epoch Hub] Stacks refreshed on load - saved tier resolved; no overflow cleanup performed.");
         }
 
         /// <summary>
@@ -452,6 +607,10 @@ namespace EpochNeural
             if (hubItems == null || hubItems.Count == 0)
                 return true;
 
+            // Final safety boundary: make sure the saved tier is restored
+            // before the first visual stack representation is constructed.
+            ResolveSavedTierBeforeHubUi();
+
             int stackCap = GetCurrentStackCap();
             var compressed = BuildCustomStacks(EpochNeural.EpochHubInventory, hubItems, stackCap);
 
@@ -478,6 +637,8 @@ namespace EpochNeural
                 __result = false;
                 return false;
             }
+
+            ResolveSavedTierBeforeHubUi();
 
             int stackCap = GetCurrentStackCap();
             var compressed = BuildCustomStacks(__instance, items, stackCap);
@@ -594,14 +755,25 @@ namespace EpochNeural
     {
         [HarmonyPatch(typeof(EpochUI.DirectInventoryScroller), "LateUpdate")]
         [HarmonyPostfix]
-        private static void PostfixLateUpdateSync(EpochUI.DirectInventoryScroller __instance)
+        private static void PostfixLateUpdateSync(
+    EpochUI.DirectInventoryScroller __instance)
         {
-            if (EpochNeural.EpochHubInventory == null) return;
+            if (EpochNeural.EpochHubInventory == null)
+                return;
+
+            int currentStackCap =
+                EpochHubLogistics.GetCurrentStackCap();
+
+            if (EpochHubLogistics._lastUiStackCap != currentStackCap)
+            {
+                EpochHubLogistics.RefreshHubVisualImmediately();
+            }
 
             GridLayoutGroup grid =
                 __instance.GetComponentInChildren<GridLayoutGroup>(true);
 
-            if (grid == null) return;
+            if (grid == null)
+                return;
 
             int slotCount = grid.transform.childCount;
             var compressedData =

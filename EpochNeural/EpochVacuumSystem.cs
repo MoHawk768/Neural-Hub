@@ -13,7 +13,7 @@ namespace EpochNeural
         // CONFIGURATION
         // ============================================================
 
-        private const float VacuumInterval = 5f;
+        private const float VacuumInterval = 30f;
 
         // ============================================================
         // RUNTIME STATE
@@ -34,31 +34,19 @@ namespace EpochNeural
         private static int _cachedStackCap = 25;
 
         // ============================================================
-        // MACHINE TYPES FOR AUTOMATION
+        // MACHINE TYPES FOR SUPPLY AUTOMATION
         // ============================================================
-
-        // Machine group IDs that have inventories we can collect from
-        private static readonly HashSet<string> _collectableMachineIds = new HashSet<string>
-        {
-            "AlgaeGenerator",
-            "WaterCollector",
-            "Furnace",
-            "BioLab",
-            "DNAExtractor",
-            "OreExtractor",
-            "Epoch_Node_Drill"
-        };
-
-        // Machine group IDs that we can supply resources to
-        private static readonly HashSet<string> _suppliableMachineIds = new HashSet<string>
-        {
-            "AutoCrafter",
-            "RocketPlatform",
-            "Furnace",
-            "BioLab",
-            "DNAExtractor",
-            "VegetationGrower"
-        };
+        // Machine group IDs that can receive resources from the Epoch Hub.
+        private static readonly HashSet<string> _suppliableMachineIds =
+            new HashSet<string>
+            {
+                "AutoCrafter",
+                "RocketPlatform",
+                "Furnace",
+                "BioLab",
+                "DNAExtractor",
+                "VegetationGrower"
+            };
 
         // ============================================================
         // INITIALIZATION
@@ -450,92 +438,9 @@ namespace EpochNeural
             if (remainingBudget <= 0 || _hubInventory == null)
                 return 0;
 
-            var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
-            if (constructedObjects == null) return 0;
-
-            int totalCollected = 0;
-            int budgetUsed = 0;
-
-            foreach (var wo in constructedObjects)
-            {
-                if (remainingBudget <= 0) break;
-                if (wo == null || wo.GetGroup() == null) continue;
-
-                string groupId = wo.GetGroup().GetId();
-
-                if (!_collectableMachineIds.Contains(groupId)) continue;
-
-                if (groupId == "Epoch_Node_Drill" || groupId == "OreExtractor" || groupId.Contains("OreExtractor"))
-                    continue;
-
-                int inventoryId = wo.GetLinkedInventoryId();
-                if (inventoryId == 0) continue;
-
-                Inventory machineInventory = InventoriesHandler.Instance.GetInventoryById(inventoryId);
-                if (machineInventory == null) continue;
-
-                var items = machineInventory.GetInsideWorldObjects();
-                if (items == null || items.Count == 0) continue;
-
-                foreach (WorldObject item in items)
-                {
-                    if (remainingBudget <= 0) break;
-                    if (item == null || item.GetGroup() == null) continue;
-
-                    string resourceId = item.GetGroup().GetId();
-                    if (!_learnedResources.Contains(resourceId)) continue;
-
-                    if (EpochHubLogistics.IsResourceSlotFull(resourceId)) continue;
-
-                    try
-                    {
-                        bool transferSuccess = false;
-                        InventoriesHandler.Instance.TransferItem(
-                            machineInventory,
-                            _hubInventory,
-                            item,
-                            delegate (bool success)
-                            {
-                                transferSuccess = success;
-                            }
-                        );
-
-                        if (transferSuccess)
-                        {
-                            totalCollected++;
-                            remainingBudget--;
-                            budgetUsed++;
-                        }
-                        else
-                        {
-                            if (machineInventory.ContainWorldObject(item))
-                            {
-                                machineInventory.RemoveItem(item);
-                                if (_hubInventory.AddItem(item))
-                                {
-                                    totalCollected++;
-                                    remainingBudget--;
-                                    budgetUsed++;
-                                }
-                            }
-                        }
-
-                        EpochHubLogistics.RefreshCompressedStacks();
-                    }
-                    catch (Exception ex)
-                    {
-                        Plugin.Logger?.LogWarning($"[Epoch Hub] Error collecting {resourceId} from {groupId}: {ex.Message}");
-                    }
-                }
-            }
-
-            if (totalCollected > 0)
-            {
-                EpochHubLogistics.RefreshCompressedStacks();
-                Plugin.Logger?.LogInfo($"[Epoch Hub] Machine Collection | Total: {totalCollected} | Budget Used: {budgetUsed} | Remaining: {remainingBudget}");
-            }
-
-            return totalCollected;
+            return EpochMachineCollection.CollectOutputs(
+                _hubInventory,
+                ref remainingBudget);
         }
 
         // ============================================================

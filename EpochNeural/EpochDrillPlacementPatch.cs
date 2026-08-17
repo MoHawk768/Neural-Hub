@@ -45,60 +45,47 @@ namespace EpochNeural
 
                 Vector3 position = ghost.transform.position;
 
-                // Check if in landing zone
+                // ============================================================
+                // VEIN LOCK - The extractor must sit over a real ore vein.
+                // The biome is NOT the extraction target anymore.
+                // ============================================================
+                MachineGenerationGroupVein vein = EpochDrillManager.FindVeinUnderPosition(position);
                 bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
 
-                if (isInLandingZone)
+                if (vein == null)
                 {
-                    // Landing zone drill - check if landing zone is already occupied
-                    if (EpochDrillManager.IsLandingZoneOccupied())
-                    {
-                        ShowMessage("EPOCH: Landing Area already has a Node Extractor!");
-                        return false;
-                    }
-
-                    // Check total drill limit (biome drills + landing zone drill)
-                    int totalVeins = EpochDrillManager.GetTotalVeinsOnCurrentPlanet();
-                    int currentDrills = EpochDrillManager.GetActiveDrillsCount();
-
-                    if (currentDrills >= totalVeins)
-                    {
-                        ShowMessage($"EPOCH: Maximum Node Extractors reached! ({currentDrills}/{totalVeins})");
-                        return false;
-                    }
-
-                    Plugin.Logger?.LogInfo($"[Epoch Drill] Landing Area Node Extractor placement approved.");
-                    return true;
-                }
-
-                // Not in landing zone - check biome
-                string sectorGroupId = GetSectorGroupId(position);
-
-                // If UnknownBiome, treat it as a generic "Landing Area"
-                if (string.IsNullOrEmpty(sectorGroupId) || sectorGroupId == "UnknownBiome")
-                {
-                    sectorGroupId = "Landing Area";
-                    Plugin.Logger?.LogInfo($"[Epoch Drill] Using 'Landing Area' for position: {position}");
-                }
-
-                // Check if biome is occupied
-                if (EpochDrillManager.IsBiomeOccupied(sectorGroupId))
-                {
-                    ShowMessage($"EPOCH: {sectorGroupId} already has a Node Extractor!");
+                    ShowMessage("EPOCH: Place the Node Extractor directly over an ore vein!");
+                    Plugin.Logger?.LogInfo($"[Epoch Drill] Placement rejected: no ore vein under {position}.");
                     return false;
                 }
 
-                // Check total drill limit
-                int totalVeins2 = EpochDrillManager.GetTotalVeinsOnCurrentPlanet();
-                int currentDrills2 = EpochDrillManager.GetActiveDrillsCount();
-
-                if (currentDrills2 >= totalVeins2)
+                int veinWorldObjectId = EpochDrillManager.GetVeinWorldObjectId(vein);
+                if (veinWorldObjectId <= 0)
                 {
-                    ShowMessage($"EPOCH: Maximum Node Extractors reached! ({currentDrills2}/{totalVeins2})");
+                    ShowMessage("EPOCH: Could not identify the ore vein!");
                     return false;
                 }
 
-                Plugin.Logger?.LogInfo($"[Epoch Drill] Node Extractor placement approved for biome: {sectorGroupId}");
+                // One Epoch extractor per physical vein. Multiple veins in the
+                // same biome are therefore completely independent.
+                if (EpochDrillManager.IsVeinOccupied(veinWorldObjectId))
+                {
+                    ShowMessage("EPOCH: That ore vein already has a Node Extractor!");
+                    Plugin.Logger?.LogWarning($"[Epoch Drill] Placement rejected: vein {veinWorldObjectId} already claimed.");
+                    return false;
+                }
+
+                int totalVeins = EpochDrillManager.GetTotalVeinsOnCurrentPlanet();
+                int currentDrills = EpochDrillManager.GetActiveDrillsCount();
+                if (currentDrills >= totalVeins + 1)
+                {
+                    ShowMessage($"EPOCH: Maximum Node Extractors reached! ({currentDrills}/{totalVeins + 1})");
+                    return false;
+                }
+
+                string resourceName = EpochDrillManager.GetVeinResourceName(vein);
+                Plugin.Logger?.LogInfo(
+                    $"[Epoch Drill] Placement approved. Vein={veinWorldObjectId}, Resource={resourceName}, Landing={isInLandingZone}");
                 return true;
             }
             catch (Exception ex)
@@ -165,21 +152,20 @@ namespace EpochNeural
                 Vector3 position = latestDrill.GetPosition();
                 bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
 
-                // Get biome name
-                string biomeName = "Landing Area";
-                if (!isInLandingZone)
+                MachineGenerationGroupVein vein = EpochDrillManager.FindVeinUnderPosition(position);
+                if (vein == null)
                 {
-                    biomeName = GetSectorGroupId(position);
-                    if (string.IsNullOrEmpty(biomeName) || biomeName == "UnknownBiome")
-                        biomeName = "Landing Area";
+                    WorldObjectsHandler.Instance.DestroyWorldObject(latestDrill.GetId(), true);
+                    ShowMessage("EPOCH: No ore vein found under Node Extractor!");
+                    return;
                 }
 
-                // Register the drill.
-                // Landing Area is a separate registry slot. Passing "Landing Area"
-                // as a normal biome makes it count as Map 1/20 instead of Landing 1/1.
-                bool registered = isInLandingZone
-                    ? EpochDrillManager.TryRegisterDrill(null, latestDrill.GetId(), position)
-                    : EpochDrillManager.TryRegisterDrill(biomeName, latestDrill.GetId(), position);
+                int veinWorldObjectId = EpochDrillManager.GetVeinWorldObjectId(vein);
+                string resourceName = EpochDrillManager.GetVeinResourceName(vein);
+
+                // Register against the PHYSICAL VEIN, never the biome.
+                bool registered = EpochDrillManager.TryRegisterDrill(
+                    null, latestDrill.GetId(), position);
 
                 if (registered)
                 {
@@ -192,6 +178,12 @@ namespace EpochNeural
                         {
                             cleanup = gameObject.AddComponent<EpochDrillCleanup>();
                         }
+                        // Keep the existing cleanup component for destruction/UI compatibility.
+                        // The authoritative vein binding is stored by the game's WorldObject
+                        // linked-world-object field, not by the biome name.
+                        string biomeName = GetSectorGroupId(position);
+                        if (string.IsNullOrEmpty(biomeName) || biomeName == "UnknownBiome")
+                            biomeName = isInLandingZone ? "Landing Area" : "Unknown Area";
                         cleanup.Initialize(latestDrill.GetId(), biomeName);
                         Plugin.Logger?.LogInfo($"[Epoch Drill] Cleanup component attached to Node Extractor [{latestDrill.GetId()}]");
                     }
@@ -199,14 +191,14 @@ namespace EpochNeural
                     // Show notification on HUD
                     if (EpochHud.Instance != null)
                     {
-                        EpochHud.Instance.ShowNotification($"{biomeName} Node Extractor Installed", true);
+                        EpochHud.Instance.ShowNotification($"{resourceName} Node Extractor Installed", true);
                     }
                     else
                     {
-                        ShowMessage($"EPOCH: {biomeName} Node Extractor Installed!");
+                        ShowMessage($"EPOCH: {resourceName} Node Extractor Installed!");
                     }
 
-                    Plugin.Logger?.LogInfo($"[Epoch Drill] Node Extractor [{latestDrill.GetId()}] installed in {biomeName}");
+                    Plugin.Logger?.LogInfo($"[Epoch Drill] Node Extractor [{latestDrill.GetId()}] locked to vein [{veinWorldObjectId}] resource [{resourceName}]");
                 }
                 else
                 {

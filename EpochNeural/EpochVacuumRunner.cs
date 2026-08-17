@@ -31,11 +31,17 @@ namespace EpochNeural
             _instance = go.AddComponent<EpochVacuumRunner>();
             go.AddComponent<EpochHud>();
 
+            // The vein locator is deliberately a normal MonoBehaviour.
+            // Do NOT Harmony-patch PlayerBuilder.Update: that method is not
+            // present in the current Planet Crafter build.
+            EpochVeinLocator.StartLocator(go);
+
             EpochDrillExtractionEngine.InitializeEngine(go);
 
             if (Plugin.Logger != null)
             {
-                Plugin.Logger.LogInfo("EpochVacuumRunner, EpochDevHud, and Drill Engine attached to persistent context.");
+                Plugin.Logger.LogInfo(
+                    "EpochVacuumRunner, EpochHud, Vein Locator, and Drill Engine attached to persistent context.");
             }
         }
 
@@ -45,7 +51,8 @@ namespace EpochNeural
             {
                 if (Plugin.Logger != null)
                 {
-                    Plugin.Logger.LogInfo("Stopping EpochVacuumRunner and cleaning up game objects.");
+                    Plugin.Logger.LogInfo(
+                        "Stopping EpochVacuumRunner and cleaning up game objects.");
                 }
 
                 Destroy(_instance.gameObject);
@@ -59,7 +66,6 @@ namespace EpochNeural
                 return;
 
             // No active player = no loaded world.
-            // Reset the runtime once and wait for the next world to load.
             if (Managers.GetManager<PlayersManager>()?.GetActivePlayerController() == null)
             {
                 EpochVacuumSystem.ResetSystem();
@@ -67,30 +73,14 @@ namespace EpochNeural
                 return;
             }
 
-            // NEW: Refresh stacks and drill registry on load
             if (!_hasRefreshedOnLoad && EpochNeural.EpochHubInventory != null)
             {
-                // ========================================================
-                // RESTORE TIER FIRST
-                // ========================================================
-                //
-                // The Hub inventory may contain stacks from a higher tier.
-                // Resolve the actual tier from the save's Terraformation
-                // BEFORE performing any overflow cleanup.
-                //
-                EpochNeural.RestoreTierFromTerraformation();
-
-                // Refresh stack display AFTER the correct tier is restored.
                 EpochHubLogistics.RefreshStacksOnLoad();
-
-                // Refresh drill registry
                 EpochDrillManager.RefreshRegistryFromWorld();
 
                 _hasRefreshedOnLoad = true;
-
                 Plugin.Logger?.LogInfo(
-                    $"[Epoch] Refreshed stacks and drill registry on load. " +
-                    $"Restored Tier: {EpochNeural.CurrentTier}");
+                    "[Epoch] Refreshed stacks and drill registry on load.");
             }
 
             try
@@ -99,13 +89,15 @@ namespace EpochNeural
             }
             catch (System.Exception ex)
             {
-                Plugin.Logger?.LogError($"Error in runner processing step: {ex}");
+                Plugin.Logger?.LogError(
+                    $"Error in runner processing step: {ex}");
             }
 
             if (Time.time - _lastLogTime >= LOG_INTERVAL)
             {
                 _lastLogTime = Time.time;
-                Plugin.Logger?.LogInfo("EpochVacuumRunner background thread processing normal.");
+                Plugin.Logger?.LogInfo(
+                    "EpochVacuumRunner background thread processing normal.");
             }
         }
     }

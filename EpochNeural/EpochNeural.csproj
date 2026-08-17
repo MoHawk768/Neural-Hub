@@ -60,6 +60,10 @@
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\..\..\Game Decompiled Assets\UnityEngine.CoreModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.IMGUIModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>C:\Program Files (x86)\Steam\steamapps\common\The Planet Crafter\Planet Crafter_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
     <Reference Include="UnityEngine.TextCoreFontEngineModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>C:\Program Files (x86)\Steam\steamapps\common\The Planet Crafter\Planet Crafter_Data\Managed\UnityEngine.TextCoreFontEngineModule.dll</HintPath>
@@ -81,6 +85,8 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EpochDrillUiLockPatch.cs" />
+    <Compile Include="EpochDrillVeinBindingPatch.cs" />
     <Compile Include="EpochFoodGrowerProtection.cs" />
     <Compile Include="EpochHubInventoryRules.cs" />
     <Compile Include="EpochHubRelocation.cs" />
@@ -93,11 +99,13 @@
     <Compile Include="EpochHubLogistics.cs" />
     <Compile Include="EpochHubUI.cs" />
     <Compile Include="EpochHubVisuals.cs" />
+    <Compile Include="EpochMachineCollection.cs" />
     <Compile Include="EpochNeural.cs" />
     <Compile Include="EpochRemoteCrafting.cs" />
     <Compile Include="EpochVacuumDiscovery.cs" />
     <Compile Include="EpochVacuumRunner.cs" />
     <Compile Include="EpochVacuumSystem.cs" />
+    <Compile Include="EpochVeinLocator.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <None Include="SpaceCraft\AchievementLocation.cs" />
