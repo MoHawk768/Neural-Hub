@@ -35,51 +35,86 @@ namespace EpochNeural
 
             Plugin.Logger?.LogInfo(
                 string.IsNullOrEmpty(resource)
-                    ? "[Epoch Drill UI] Resource selector blocked for locked extractor."
-                    : $"[Epoch Drill UI] Resource selector blocked for locked extractor -> {resource}.");
+                    ? "[Epoch Drill UI] Resource selector blocked; opening extractor inventory."
+                    : $"[Epoch Drill UI] Resource selector blocked for locked extractor -> {resource}; opening inventory.");
 
-            return false;
-        }
+            // The vanilla ActionGroupSelector is also the interaction point
+            // that the player uses on an ore extractor. Do not disable it.
+            // Redirect the interaction to the extractor's normal
+            // ActionOpenable, which opens the physical inventory.
+            // Epoch extractors do not contain an ActionOpenable component.
+            // The vanilla ActionGroupSelector itself already proves that the
+            // extractor has an InventoryAssociated. Open the normal Container
+            // inventory window directly, using the same inventory/UI path that
+            // vanilla ActionOpenable uses internally.
+            var associated = __instance.GetComponentInParent<WorldObjectAssociated>();
+            var inventoryAssociated = __instance.GetComponentInParent<InventoryAssociated>();
 
-        // ------------------------------------------------------------
-        // HOVER SAFEGUARD: suppress the selector's vanilla "Open" hint.
-        // ------------------------------------------------------------
-
-        [HarmonyPatch(typeof(ActionGroupSelector), "OnHover")]
-        [HarmonyPrefix]
-        private static bool PrefixActionGroupSelectorHover(ActionGroupSelector __instance)
-        {
-            if (!IsEpochDrill(__instance))
-                return true;
-
-            return false;
-        }
-
-        // ------------------------------------------------------------
-        // INITIALIZATION SAFEGUARD: if we can identify the Epoch drill at
-        // component initialization time, disable the selector component.
-        // The OnAction prefix above remains the authoritative fallback.
-        // ------------------------------------------------------------
-
-        [HarmonyPatch(typeof(ActionGroupSelector), "Awake")]
-        [HarmonyPostfix]
-        private static void PostfixActionGroupSelectorAwake(ActionGroupSelector __instance)
-        {
-            try
-            {
-                if (!IsEpochDrill(__instance))
-                    return;
-
-                __instance.enabled = false;
-                Plugin.Logger?.LogInfo(
-                    "[Epoch Drill UI] Vanilla resource selector component disabled.");
-            }
-            catch (Exception ex)
+            if (associated == null || inventoryAssociated == null)
             {
                 Plugin.Logger?.LogWarning(
-                    $"[Epoch Drill UI] Failed to disable selector component: {ex.Message}");
+                    "[Epoch Drill UI] Cannot open extractor inventory: missing WorldObjectAssociated or InventoryAssociated.");
+                return false;
             }
+
+            inventoryAssociated.GetInventory(delegate (Inventory objectInventory)
+            {
+                var player = Managers.GetManager<PlayersManager>()
+                    .GetActivePlayerController();
+
+                if (player == null)
+                {
+                    Plugin.Logger?.LogWarning(
+                        "[Epoch Drill UI] Cannot open extractor inventory: active player controller missing.");
+                    return;
+                }
+
+                Inventory playerInventory = player.GetPlayerBackpack().GetInventory();
+
+                var openedUi = (UiWindowContainer)Managers.GetManager<WindowsHandler>()
+                    .OpenAndReturnUi(DataConfig.UiType.Container);
+
+                if (openedUi == null)
+                {
+                    Plugin.Logger?.LogWarning(
+                        "[Epoch Drill UI] Cannot open extractor inventory: Container UI could not be opened.");
+                    return;
+                }
+
+                openedUi.SetInventories(
+                    playerInventory,
+                    objectInventory,
+                    hideLogistics: false);
+
+                var worldObject = associated.GetWorldObject();
+
+                if (worldObject != null)
+                {
+                    var worldObjectText = __instance.GetComponent<WorldObjectText>();
+
+                    if (worldObjectText != null)
+                    {
+                        openedUi.SetContainerName(worldObjectText.GetText());
+                    }
+                }
+
+                Plugin.Logger?.LogInfo(
+                    $"[Epoch Drill UI] Extractor inventory opened successfully for [{resource}].");
+            });
+
+            return false;
         }
+
+        // ------------------------------------------------------------
+        // HOVER: keep the vanilla "Open" interaction hint.
+        // The click is redirected by PrefixActionGroupSelector above.
+        // ------------------------------------------------------------
+
+        // ------------------------------------------------------------
+        // The selector remains enabled because it is the player's interaction
+        // point. OnAction is redirected above; the vanilla selector window
+        // is never opened for Epoch extractors.
+        // ------------------------------------------------------------
 
         private static bool IsEpochDrill(ActionGroupSelector selector)
         {
