@@ -12,6 +12,14 @@ namespace EpochNeural
     [HarmonyPatch]
     internal static class EpochDrillPlacementPatch
     {
+        // The placement prefix can resolve a buried/obstructed vein through
+        // Epoch's validated build-site cache. OnConstructed only receives the
+        // finished WorldObject, so retain the resolved physical vein briefly
+        // until the corresponding drill is registered.
+        private static MachineGenerationGroupVein _pendingPlacementVein;
+        private static Vector3 _pendingPlacementPosition;
+        private static float _pendingPlacementTime = -1f;
+
         // ============================================================
         // PLACEMENT VALIDATION - Runs BEFORE placement
         // ============================================================
@@ -49,15 +57,63 @@ namespace EpochNeural
                 // VEIN LOCK - The extractor must sit over a real ore vein.
                 // The biome is NOT the extraction target anymore.
                 // ============================================================
-                MachineGenerationGroupVein vein = EpochDrillManager.FindVeinUnderPosition(position);
-                bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
+                MachineGenerationGroupVein vein =
+                    EpochDrillManager.FindVeinUnderPosition(position);
+
+                bool isInLandingZone =
+                    EpochDrillManager.IsLandingAreaPosition(position);
 
                 if (vein == null)
                 {
-                    ShowMessage("EPOCH: Place the Node Extractor directly over an ore vein!");
-                    Plugin.Logger?.LogInfo($"[Epoch Drill] Placement rejected: no ore vein under {position}.");
+                    // Buried/obstructed veins can be far below the playable
+                    // surface, so the normal 15m physical lookup can fail even
+                    // though the player is standing on perfectly valid vanilla
+                    // terrain near the vein.
+                    //
+                    // IMPORTANT: this fallback does NOT bypass vanilla
+                    // construction validation. We only resolve WHICH physical
+                    // vein the player is targeting. PlayerBuilder's normal
+                    // placement checks still decide whether the actual ghost
+                    // can be built at this surface.
+                    if (TryFindNearestPlacementVein(
+                        position,
+                        100f,
+                        out MachineGenerationGroupVein nearbyVein,
+                        out float nearbyDistance))
+                    {
+                        vein = nearbyVein;
+
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Drill] Placement resolved buried/obstructed " +
+                            $"vein={EpochDrillManager.GetVeinWorldObjectId(vein)}, " +
+                            $"resource={EpochDrillManager.GetVeinResourceName(vein)}, " +
+                            $"horizontalDistance={nearbyDistance:F1}m, " +
+                            $"surface={position}.");
+
+                        isInLandingZone =
+                            EpochDrillManager.IsLandingAreaPosition(position);
+                    }
+                }
+
+                if (vein == null)
+                {
+                    ShowMessage(
+                        "EPOCH: No physical ore vein is within the Node Extractor range.");
+
+                    Plugin.Logger?.LogInfo(
+                        $"[Epoch Drill] Placement rejected: no physical vein " +
+                        $"within the 100m Epoch placement range of {position}.");
+
                     return false;
                 }
+
+                // Preserve the exact physical vein resolved by this
+                // placement attempt. This is especially important for buried
+                // veins where FindVeinUnderPosition(position) cannot rediscover
+                // the vein after the extractor is actually constructed.
+                _pendingPlacementVein = vein;
+                _pendingPlacementPosition = position;
+                _pendingPlacementTime = Time.time;
 
                 int veinWorldObjectId = EpochDrillManager.GetVeinWorldObjectId(vein);
                 if (veinWorldObjectId <= 0)
@@ -92,6 +148,60 @@ namespace EpochNeural
             {
                 Plugin.Logger?.LogError($"[Epoch Drill] Error in PrefixPlaceDrill: {ex.Message}");
                 ShowMessage("EPOCH: Error checking Node Extractor placement!");
+                return false;
+            }
+        }
+
+        // ============================================================
+        // BURIED / OBSTRUCTED VEIN RESOLUTION
+        // ============================================================
+
+        private static bool TryFindNearestPlacementVein(
+            Vector3 position,
+            float maxHorizontalDistance,
+            out MachineGenerationGroupVein nearestVein,
+            out float nearestDistance)
+        {
+            nearestVein = null;
+            nearestDistance = float.MaxValue;
+
+            try
+            {
+                var veins =
+                    UnityEngine.Object.FindObjectsByType<MachineGenerationGroupVein>(
+                        FindObjectsSortMode.None);
+
+                foreach (var candidate in veins)
+                {
+                    if (candidate == null ||
+                        !candidate.gameObject.activeInHierarchy)
+                        continue;
+
+                    Vector3 veinPosition = candidate.transform.position;
+
+                    float dx = position.x - veinPosition.x;
+                    float dz = position.z - veinPosition.z;
+
+                    float horizontal =
+                        Mathf.Sqrt((dx * dx) + (dz * dz));
+
+                    if (horizontal > maxHorizontalDistance ||
+                        horizontal >= nearestDistance)
+                        continue;
+
+                    nearestVein = candidate;
+                    nearestDistance = horizontal;
+                }
+
+                return nearestVein != null;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Drill] Buried-vein placement lookup failed: {ex.Message}");
+
+                nearestVein = null;
+                nearestDistance = float.MaxValue;
                 return false;
             }
         }
@@ -150,22 +260,71 @@ namespace EpochNeural
                     return;
 
                 Vector3 position = latestDrill.GetPosition();
-                bool isInLandingZone = EpochDrillManager.IsLandingAreaPosition(position);
+                bool isInLandingZone =
+                    EpochDrillManager.IsLandingAreaPosition(position);
 
-                MachineGenerationGroupVein vein = EpochDrillManager.FindVeinUnderPosition(position);
+                // First recover the exact physical vein resolved by the
+                // placement prefix. This is authoritative for buried/obstructed
+                // veins and avoids trying to rediscover an underground vein from
+                // the finished extractor's surface position.
+                MachineGenerationGroupVein vein = null;
+
+                if (_pendingPlacementVein != null &&
+                    Time.time - _pendingPlacementTime <= 5f)
+                {
+                    float dx =
+                        _pendingPlacementPosition.x - position.x;
+                    float dz =
+                        _pendingPlacementPosition.z - position.z;
+
+                    float horizontal =
+                        Mathf.Sqrt(dx * dx + dz * dz);
+
+                    if (horizontal <= 8f)
+                    {
+                        vein = _pendingPlacementVein;
+
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Drill] Post-construction recovered " +
+                            $"placement-resolved vein " +
+                            $"[{EpochDrillManager.GetVeinWorldObjectId(vein)}] " +
+                            $"for finished drill at {position}.");
+                    }
+                }
+
+                // Direct physical lookup remains the fallback for normal
+                // exposed veins.
+                if (vein == null)
+                    vein = EpochDrillManager.FindVeinUnderPosition(position);
+
                 if (vein == null)
                 {
-                    WorldObjectsHandler.Instance.DestroyWorldObject(latestDrill.GetId(), true);
-                    ShowMessage("EPOCH: No ore vein found under Node Extractor!");
+                    WorldObjectsHandler.Instance.DestroyWorldObject(
+                        latestDrill.GetId(), true);
+
+                    ShowMessage(
+                        "EPOCH: No ore vein could be resolved for Node Extractor!");
+
+                    Plugin.Logger?.LogWarning(
+                        $"[Epoch Drill] Post-construction rejected drill " +
+                        $"[{latestDrill.GetId()}]: no physical or cached Epoch vein " +
+                        $"at {position}.");
+
                     return;
                 }
 
-                int veinWorldObjectId = EpochDrillManager.GetVeinWorldObjectId(vein);
+                int veinWorldObjectId =
+                    EpochDrillManager.GetVeinWorldObjectId(vein);
                 string resourceName = EpochDrillManager.GetVeinResourceName(vein);
 
-                // Register against the PHYSICAL VEIN, never the biome.
-                bool registered = EpochDrillManager.TryRegisterDrill(
-                    null, latestDrill.GetId(), position);
+                // Register using the EXACT physical vein resolved by the
+                // placement prefix. This is critical for buried/obstructed
+                // veins: the finished extractor surface can be ~73m from the
+                // physical vein, so TryRegisterDrill(position) would fail its
+                // normal 15m lookup and destroy a valid extractor.
+                bool registered = EpochDrillManager.TryRegisterDrillForVein(
+                    latestDrill.GetId(),
+                    vein);
 
                 if (registered)
                 {
@@ -198,14 +357,27 @@ namespace EpochNeural
                         ShowMessage($"EPOCH: {resourceName} Node Extractor Installed!");
                     }
 
-                    Plugin.Logger?.LogInfo($"[Epoch Drill] Node Extractor [{latestDrill.GetId()}] locked to vein [{veinWorldObjectId}] resource [{resourceName}]");
+                    Plugin.Logger?.LogInfo(
+                        $"[Epoch Drill] Node Extractor [{latestDrill.GetId()}] " +
+                        $"locked to vein [{veinWorldObjectId}] resource [{resourceName}]");
+
+                    // Prevent an old placement resolution from being reused
+                    // by a later unrelated construction.
+                    _pendingPlacementVein = null;
+                    _pendingPlacementPosition = Vector3.zero;
+                    _pendingPlacementTime = -1f;
                 }
                 else
                 {
                     // Registration failed - destroy the drill
                     WorldObjectsHandler.Instance.DestroyWorldObject(latestDrill.GetId(), true);
                     ShowMessage("EPOCH: Failed to register Node Extractor!");
-                    Plugin.Logger?.LogWarning($"[Epoch Drill] Node Extractor registration failed, destroyed.");
+                    Plugin.Logger?.LogWarning(
+                        $"[Epoch Drill] Node Extractor registration failed, destroyed.");
+
+                    _pendingPlacementVein = null;
+                    _pendingPlacementPosition = Vector3.zero;
+                    _pendingPlacementTime = -1f;
                 }
 
                 // Refresh HUD

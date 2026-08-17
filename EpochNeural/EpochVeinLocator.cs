@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using SpaceCraft;
 using TMPro;
 using UnityEngine;
@@ -40,7 +42,27 @@ namespace EpochNeural
         private string _nearestResource = "VEIN";
 
         private Vector3 _playerPosition;
+        private Vector3 _buildSitePosition;
+        private bool _hasBuildSite;
         private bool _active;
+        private bool _siteScanRunning;
+        private float _nextSiteScanTime;
+
+        // Build-site discovery is expensive because each candidate is checked
+        // through vanilla's real placement validator. Cache the result for
+        // each physical vein so proximity updates do not repeatedly rescan
+        // the same vein every second.
+        private readonly Dictionary<int, BuildSiteCacheEntry> _buildSiteCache =
+            new Dictionary<int, BuildSiteCacheEntry>();
+
+        private int _buildSiteVeinInstanceId = 0;
+
+        private sealed class BuildSiteCacheEntry
+        {
+            internal bool HasValidSite;
+            internal Vector3 SitePosition;
+            internal MachineGenerationGroupVein Vein;
+        }
 
         // ------------------------------------------------------------
         // PERSISTENT LOCATOR LIFECYCLE
@@ -176,8 +198,33 @@ namespace EpochNeural
                 }
 
                 _nearestVeinPosition = best.transform.position;
-
                 _nearestResource = GetFriendlyResourceName(best);
+
+                int veinInstanceId = best.GetInstanceID();
+
+                // Reuse a previously discovered result immediately. This is
+                // especially important while the player remains near a vein:
+                // the HUD scans frequently, but vanilla placement probing must
+                // happen at most once per vein per locator lifetime.
+                if (_buildSiteVeinInstanceId != veinInstanceId)
+                {
+                    _buildSiteVeinInstanceId = veinInstanceId;
+                    _hasBuildSite = false;
+                }
+
+                if (_buildSiteCache.TryGetValue(
+                        veinInstanceId,
+                        out BuildSiteCacheEntry cached))
+                {
+                    _hasBuildSite = cached.HasValidSite;
+                    _buildSitePosition = cached.SitePosition;
+                }
+                else if (!_siteScanRunning &&
+                         Time.time >= _nextSiteScanTime)
+                {
+                    _nextSiteScanTime = Time.time + 1.0f;
+                    StartCoroutine(FindNearestValidBuildSite(best));
+                }
             }
             catch (Exception ex)
             {
@@ -190,10 +237,492 @@ namespace EpochNeural
         }
 
         // ------------------------------------------------------------
+        // FIND A REAL, VANILLA-BUILDABLE SURFACE SITE
+        // ------------------------------------------------------------
+
+        private IEnumerator FindNearestValidBuildSite(
+            MachineGenerationGroupVein vein)
+        {
+            if (vein == null || _siteScanRunning)
+                yield break;
+
+            _siteScanRunning = true;
+
+            int veinInstanceId = vein.GetInstanceID();
+
+            if (!_buildSiteCache.ContainsKey(veinInstanceId))
+                _hasBuildSite = false;
+
+            Vector3 veinPos = vein.transform.position;
+
+            try
+            {
+                // Search a bounded area around the physical vein, but choose
+                // the VALID site that is most useful to the player rather than
+                // automatically accepting the first valid point directly above
+                // the vein. This matters for buried/obstructed veins such as
+                // Obsidian, where the first valid surface can be on top of a
+                // boulder while a usable surface exists farther away.
+                const float MAX_SEARCH_RADIUS = 100f;
+                const float RING_STEP = 5f;
+
+                Vector3 playerPosition = Vector3.zero;
+                bool havePlayerPosition = false;
+
+                try
+                {
+                    var player = UnityEngine.Object.FindFirstObjectByType<PlayerMainController>();
+                    if (player != null)
+                    {
+                        playerPosition = player.transform.position;
+                        havePlayerPosition = true;
+                    }
+                }
+                catch
+                {
+                    // Fall back to the original ring-order behaviour if the
+                    // player controller cannot be resolved.
+                }
+
+                var candidates = new List<Vector3>();
+
+                // Always include the vein center.
+                candidates.Add(new Vector3(veinPos.x, 0f, veinPos.z));
+
+                // Build concentric rings. We retain every candidate because
+                // selection happens AFTER vanilla validation; this lets us
+                // choose the best valid surface instead of the first valid one.
+                for (float radius = RING_STEP;
+                     radius <= MAX_SEARCH_RADIUS;
+                     radius += RING_STEP)
+                {
+                    int samples = Mathf.Max(
+                        12,
+                        Mathf.CeilToInt(2f * Mathf.PI * radius / RING_STEP));
+
+                    for (int i = 0; i < samples; i++)
+                    {
+                        float angle = (Mathf.PI * 2f * i) / samples;
+
+                        candidates.Add(
+                            new Vector3(
+                                veinPos.x + Mathf.Cos(angle) * radius,
+                                0f,
+                                veinPos.z + Mathf.Sin(angle) * radius));
+                    }
+                }
+
+                bool found = false;
+                Vector3 bestSurface = Vector3.zero;
+                float bestScore = float.MaxValue;
+                float bestVeinDistance = float.MaxValue;
+                int tested = 0;
+                int validCount = 0;
+
+                foreach (var candidateXZ in candidates)
+                {
+                    if (!TryGetSurfacePoint(
+                        candidateXZ.x,
+                        candidateXZ.z,
+                        out Vector3 surface))
+                    {
+                        continue;
+                    }
+
+                    float veinDistance =
+                        HorizontalDistance(surface, veinPos);
+
+                    if (veinDistance > MAX_SEARCH_RADIUS)
+                        continue;
+
+                    tested++;
+
+                    bool valid = false;
+
+                    yield return StartCoroutine(
+                        ProbeVanillaPlacement(
+                            surface,
+                            result => valid = result));
+
+                    if (!valid)
+                        continue;
+
+                    validCount++;
+
+                    // If the player position is available, favour the valid
+                    // surface nearest to the player, while still requiring it
+                    // to remain within the bounded vein search radius.
+                    //
+                    // A small vein-distance component prevents a very distant
+                    // valid point from winning when several player-side sites
+                    // are available.
+                    float playerDistance = havePlayerPosition
+                        ? HorizontalDistance(surface, playerPosition)
+                        : veinDistance;
+
+                    float score =
+                        playerDistance +
+                        (veinDistance * 0.10f);
+
+                    if (!found || score < bestScore)
+                    {
+                        found = true;
+                        bestScore = score;
+                        bestSurface = surface;
+                        bestVeinDistance = veinDistance;
+                    }
+                }
+
+                if (found)
+                {
+                    _buildSiteCache[veinInstanceId] =
+                        new BuildSiteCacheEntry
+                        {
+                            HasValidSite = true,
+                            SitePosition = bestSurface,
+                            Vein = vein
+                        };
+
+                    if (_nearestVein == vein)
+                    {
+                        _buildSitePosition = bestSurface;
+                        _hasBuildSite = true;
+                    }
+
+                    Plugin.Logger?.LogInfo(
+                        $"[Epoch Vein Locator] Build site found for " +
+                        $"{_nearestResource}: vein={veinPos}, " +
+                        $"site={bestSurface}, " +
+                        $"horizontal={bestVeinDistance:F1}m, " +
+                        $"validCandidates={validCount}, tested={tested}. " +
+                        $"[PLAYER-GUIDED CACHED]");
+
+                    yield break;
+                }
+
+                _buildSiteCache[veinInstanceId] =
+                    new BuildSiteCacheEntry
+                    {
+                        HasValidSite = false,
+                        SitePosition = Vector3.zero,
+                        Vein = vein
+                    };
+
+                if (_nearestVein == vein)
+                    _hasBuildSite = false;
+
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Vein Locator] No vanilla-valid build site found " +
+                    $"within {MAX_SEARCH_RADIUS:F0}m of " +
+                    $"{_nearestResource} vein at {veinPos}. " +
+                    $"tested={tested}, valid={validCount}. " +
+                    $"[CACHED AS INVALID]");
+            }
+            finally
+            {
+                _siteScanRunning = false;
+            }
+        }
+
+        /// <summary>
+        /// Returns the nearest cached build site that was already validated by
+        /// vanilla placement rules. This is a lookup only; it never grants
+        /// placement permission on its own.
+        /// </summary>
+        internal static bool TryGetClosestCachedBuildSite(
+            Vector3 position,
+            out MachineGenerationGroupVein vein,
+            out Vector3 sitePosition)
+        {
+            vein = null;
+            sitePosition = Vector3.zero;
+
+            if (_instance == null)
+                return false;
+
+            const float HORIZONTAL_TOLERANCE = 6f;
+            const float VERTICAL_TOLERANCE = 4f;
+
+            float best = float.MaxValue;
+
+            foreach (var pair in _instance._buildSiteCache)
+            {
+                BuildSiteCacheEntry entry = pair.Value;
+
+                if (entry == null ||
+                    !entry.HasValidSite ||
+                    entry.Vein == null)
+                    continue;
+
+                float dx = entry.SitePosition.x - position.x;
+                float dz = entry.SitePosition.z - position.z;
+                float horizontal = Mathf.Sqrt(dx * dx + dz * dz);
+
+                if (horizontal > HORIZONTAL_TOLERANCE)
+                    continue;
+
+                if (Mathf.Abs(entry.SitePosition.y - position.y) >
+                    VERTICAL_TOLERANCE)
+                    continue;
+
+                if (horizontal >= best)
+                    continue;
+
+                best = horizontal;
+                vein = entry.Vein;
+                sitePosition = entry.SitePosition;
+            }
+
+            return vein != null;
+        }
+
+        private static float HorizontalDistance(Vector3 a, Vector3 b)
+        {
+            float dx = a.x - b.x;
+            float dz = a.z - b.z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        private IEnumerator ProbeVanillaPlacement(
+            Vector3 position,
+            Action<bool> result)
+        {
+            result?.Invoke(false);
+
+            GameObject probe = null;
+
+            try
+            {
+                Group drillGroup = null;
+
+                foreach (var group in GroupsHandler.GetAllGroups())
+                {
+                    if (group != null && group.GetId() == DRILL_GROUP_ID)
+                    {
+                        drillGroup = group;
+                        break;
+                    }
+                }
+
+                if (drillGroup == null)
+                    yield break;
+
+                var player =
+                    Managers.GetManager<PlayersManager>()?
+                        .GetActivePlayerController();
+
+                if (player == null)
+                    yield break;
+
+                var aim = player.GetComponent<PlayerAimController>();
+
+                if (aim == null)
+                    yield break;
+
+                GameObject prefab = drillGroup.GetAssociatedGameObject();
+
+                if (prefab == null)
+                    yield break;
+
+                // IMPORTANT:
+                // This object exists only to ask vanilla whether a position is
+                // legal. It must NEVER look like a real construction ghost.
+                probe = Instantiate(prefab);
+                probe.name = "EpochDrillPlacementProbe";
+                probe.transform.position = position;
+
+                // Hide every visual representation on the temporary probe.
+                // Do not disable the GameObject itself because the vanilla
+                // GhostPlacementChecker needs to run its normal lifecycle.
+                foreach (var renderer in
+                    probe.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (renderer != null)
+                        renderer.enabled = false;
+                }
+
+                foreach (var canvas in
+                    probe.GetComponentsInChildren<Canvas>(true))
+                {
+                    if (canvas != null)
+                        canvas.enabled = false;
+                }
+
+                // Do not reference UnityEngine.Collider here: the mod project
+                // intentionally does not reference PhysicsModule directly.
+                // The probe is temporary and has all renderers disabled, while
+                // vanilla placement validation remains responsible for the
+                // actual placement test.
+
+                // Reuse a ConstructibleGhost if the Epoch drill prefab already
+                // contains one. Never add a second ghost component.
+                var ghost = probe.GetComponent<ConstructibleGhost>();
+
+                if (ghost == null)
+                    ghost = probe.AddComponent<ConstructibleGhost>();
+
+                ghost.InitGhost(drillGroup, aim, null, null);
+
+                // A background probe cannot literally be aimed at by the
+                // player, so remove only its aim constraint. All other vanilla
+                // placement constraints remain active.
+                var aimConstraints =
+                    probe.GetComponentsInChildren<ConstraintOnAim>(true);
+
+                foreach (var aimConstraint in aimConstraints)
+                {
+                    if (aimConstraint != null)
+                        Destroy(aimConstraint);
+                }
+
+                var checker =
+                    probe.GetComponent<GhostPlacementChecker>();
+
+                // GhostPlacementChecker builds its constraint list in Start()
+                // and refreshes it periodically.
+                yield return new WaitForSeconds(0.06f);
+
+                if (checker != null)
+                {
+                    bool valid = checker.GetPositioningStatus();
+
+                    Plugin.Logger?.LogInfo(
+                        $"[Epoch Vein Locator] Vanilla placement probe at " +
+                        $"{position} -> {(valid ? "VALID" : "INVALID")}.");
+
+                    result?.Invoke(valid);
+                }
+            }
+            finally
+            {
+                // Critical: every probe is destroyed regardless of whether
+                // initialization succeeds, the coroutine yields, or an
+                // exception occurs. No construction ghost may survive.
+                if (probe != null)
+                    Destroy(probe);
+            }
+        }
+
+        // ------------------------------------------------------------
+        // RUNTIME PHYSICS SURFACE QUERY
+        //
+        // This uses Unity's PhysicsModule through reflection so the mod does
+        // not need a direct UnityEngine.PhysicsModule assembly reference.
+        // ------------------------------------------------------------
+
+        private static bool TryGetSurfacePoint(
+            float x,
+            float z,
+            out Vector3 surface)
+        {
+            surface = Vector3.zero;
+
+            try
+            {
+                Type physicsType =
+                    Type.GetType("UnityEngine.Physics, UnityEngine.PhysicsModule");
+
+                Type rayType =
+                    Type.GetType("UnityEngine.Ray, UnityEngine.CoreModule") ??
+                    Type.GetType("UnityEngine.Ray, UnityEngine.PhysicsModule");
+
+                Type hitType =
+                    Type.GetType("UnityEngine.RaycastHit, UnityEngine.PhysicsModule");
+
+                if (physicsType == null ||
+                    rayType == null ||
+                    hitType == null)
+                    return false;
+
+                object ray = Activator.CreateInstance(
+                    rayType,
+                    new object[]
+                    {
+                        new Vector3(x, 1000f, z),
+                        Vector3.down
+                    });
+
+                object hit = Activator.CreateInstance(hitType);
+
+                Type queryType = Type.GetType(
+                    "UnityEngine.QueryTriggerInteraction, UnityEngine.PhysicsModule");
+
+                if (queryType == null)
+                    return false;
+
+                object queryIgnore =
+                    Enum.Parse(queryType, "Ignore");
+
+                var methods = physicsType.GetMethods(
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.Static);
+
+                foreach (var method in methods)
+                {
+                    if (method.Name != "Raycast")
+                        continue;
+
+                    var parameters = method.GetParameters();
+
+                    if (parameters.Length != 5)
+                        continue;
+
+                    if (parameters[0].ParameterType != rayType)
+                        continue;
+
+                    if (parameters[1].ParameterType != hitType.MakeByRefType())
+                        continue;
+
+                    if (parameters[2].ParameterType != typeof(float))
+                        continue;
+
+                    if (parameters[3].ParameterType != typeof(int))
+                        continue;
+
+                    if (parameters[4].ParameterType != queryType)
+                        continue;
+
+                    object[] args =
+                    {
+                        ray,
+                        hit,
+                        2000f,
+                        ~0,
+                        queryIgnore
+                    };
+
+                    bool didHit =
+                        (bool)method.Invoke(null, args);
+
+                    if (!didHit)
+                        continue;
+
+                    var pointProperty =
+                        hitType.GetProperty("point");
+
+                    if (pointProperty == null)
+                        return false;
+
+                    surface =
+                        (Vector3)pointProperty.GetValue(args[1]);
+
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Vein Locator] Surface query failed: {ex.Message}");
+            }
+
+            return false;
+        }
+
+        // ------------------------------------------------------------
         // PLAYER-FACING RESOURCE NAME
         // ------------------------------------------------------------
 
-        private string GetFriendlyResourceName(
+        private static string GetFriendlyResourceName(
             MachineGenerationGroupVein vein)
         {
             if (vein == null)
@@ -228,7 +757,7 @@ namespace EpochNeural
             return "ORE VEIN";
         }
 
-        private string FormatResourceName(string groupId)
+        private static string FormatResourceName(string groupId)
         {
             if (string.IsNullOrWhiteSpace(groupId))
                 return "ORE VEIN";
@@ -257,8 +786,7 @@ namespace EpochNeural
 
             var go = new GameObject("EpochVeinLocatorOverlay");
             _overlay = go.AddComponent<LocatorOverlay>();
-            _overlay.SetOwner(this);
-            _overlay.Build();
+            _overlay.Build(this);
         }
 
         private void Deactivate()
@@ -266,6 +794,12 @@ namespace EpochNeural
             _active = false;
             _nearestVein = null;
             _nearestDistance = float.MaxValue;
+            _hasBuildSite = false;
+            _buildSiteVeinInstanceId = 0;
+
+            // Deliberately keep _buildSiteCache. Leaving the player's
+            // proximity must not cause an expensive vanilla placement scan
+            // to run again when they return to the same vein.
 
             if (_overlay != null)
                 _overlay.SetVisible(false);
@@ -277,7 +811,6 @@ namespace EpochNeural
 
         private sealed class LocatorOverlay : MonoBehaviour
         {
-            private EpochVeinLocator _owner;
             private Canvas _canvas;
             private RectTransform _root;
             private Image _background;
@@ -287,14 +820,12 @@ namespace EpochNeural
             private TextMeshProUGUI _hint;
 
             private bool _built;
+            private EpochVeinLocator _owner;
 
-            internal void SetOwner(EpochVeinLocator owner)
+            internal void Build(EpochVeinLocator owner)
             {
                 _owner = owner;
-            }
 
-            internal void Build()
-            {
                 if (_built)
                     return;
 
@@ -438,7 +969,6 @@ namespace EpochNeural
             {
                 if (!_built ||
                     !_canvas.enabled ||
-                    _owner == null ||
                     !_owner._active ||
                     _owner._nearestVein == null ||
                     Camera.main == null)
@@ -457,13 +987,16 @@ namespace EpochNeural
                     return;
                 }
 
-                // The actual vanilla vein transform can be hundreds of
-                // metres below the playable surface. Lift the marker to the
-                // extractor ghost's height while retaining the vein X/Z.
-                Vector3 markerWorldPosition = new Vector3(
-                    _owner._nearestVeinPosition.x,
-                    _owner._playerPosition.y + 2.0f,
-                    _owner._nearestVeinPosition.z);
+                // Prefer the nearest location that the game's own build
+                // constraints accepted. If no valid site has been found yet,
+                // fall back to the vein's X/Z so the locator still points
+                // toward the detected deposit.
+                Vector3 markerWorldPosition = _owner._hasBuildSite
+                    ? _owner._buildSitePosition + Vector3.up * 2.0f
+                    : new Vector3(
+                        _owner._nearestVeinPosition.x,
+                        _owner._playerPosition.y + 2.0f,
+                        _owner._nearestVeinPosition.z);
 
                 Vector3 screen =
                     Camera.main.WorldToScreenPoint(markerWorldPosition);
@@ -513,7 +1046,9 @@ namespace EpochNeural
                     _arrow.text =
                         GetDirectionArrow(direction);
 
-                    _hint.text = "TURN TOWARD VEIN";
+                    _hint.text = _owner._hasBuildSite
+                        ? "TURN TOWARD EXTRACTOR SITE"
+                        : "TURN TOWARD VEIN";
                 }
                 else
                 {
@@ -534,7 +1069,9 @@ namespace EpochNeural
                     _arrow.text =
                         GetDirectionArrow(direction);
 
-                    _hint.text = "NEAREST PHYSICAL VEIN";
+                    _hint.text = _owner._hasBuildSite
+                        ? "PLACE EXTRACTOR HERE"
+                        : "NEAREST PHYSICAL VEIN";
                 }
 
                 _resource.text =

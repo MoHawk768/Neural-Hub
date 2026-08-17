@@ -375,6 +375,79 @@ namespace EpochNeural
             return false;
         }
 
+        private static bool TryFindNearestVeinForLegacyBuriedDrill(
+            Vector3 position,
+            out MachineGenerationGroupVein nearestVein,
+            out int veinKey,
+            out string resourceName,
+            out float distance)
+        {
+            nearestVein = null;
+            veinKey = 0;
+            resourceName = null;
+            distance = float.MaxValue;
+
+            try
+            {
+                if (_knownVeins.Count == 0 && !RefreshVeinCache())
+                    return false;
+
+                CachedVein best = null;
+                float bestHorizontalDistance = float.MaxValue;
+
+                foreach (var cached in _knownVeins)
+                {
+                    if (cached == null || cached.Vein == null)
+                        continue;
+
+                    cached.Position = cached.Vein.transform.position;
+
+                    float dx = position.x - cached.Position.x;
+                    float dz = position.z - cached.Position.z;
+                    float horizontalDistance =
+                        Mathf.Sqrt((dx * dx) + (dz * dz));
+
+                    // Legacy recovery is intentionally wider than normal
+                    // placement validation. It is only used for an existing
+                    // saved extractor that has lost its in-memory registry
+                    // association. It does NOT change normal placement rules.
+                    if (horizontalDistance > 150f)
+                        continue;
+
+                    if (horizontalDistance >= bestHorizontalDistance)
+                        continue;
+
+                    best = cached;
+                    bestHorizontalDistance = horizontalDistance;
+                }
+
+                if (best == null)
+                {
+                    Plugin.Logger?.LogWarning(
+                        $"[Epoch Drill] Legacy buried recovery found no physical vein within 150m of {position}.");
+                    return false;
+                }
+
+                nearestVein = best.Vein;
+                veinKey = best.SignatureHash;
+                resourceName = best.ResourceId;
+                distance = Vector3.Distance(position, best.Position);
+
+                Plugin.Logger?.LogWarning(
+                    $"[Epoch Drill] LEGACY BURIED RECOVERY: extractor position {position} " +
+                    $"-> nearest physical vein [{veinKey}] -> {resourceName} " +
+                    $"at {best.Position}, distance={distance:F2}m.");
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogError(
+                    $"[Epoch Drill] Legacy buried-vein recovery failed: {ex}");
+                return false;
+            }
+        }
+
         // ============================================================
         // SAVE / WORLD RESTORATION
         // ============================================================
@@ -422,10 +495,23 @@ namespace EpochNeural
                         out string resourceName,
                         out float distance))
                 {
-                    Plugin.Logger?.LogWarning(
-                        $"[Epoch Drill] Existing drill [{drillId}] could not be " +
-                        $"matched to a physical vein and will remain unbound.");
-                    continue;
+                    // This is the critical save/load path for the existing
+                    // buried extractor. Its saved position is ~74m from the
+                    // Obsidian vein, so the normal 15m placement lookup cannot
+                    // rediscover it. Recover the nearest physical vein only
+                    // for an already-existing saved extractor.
+                    if (!TryFindNearestVeinForLegacyBuriedDrill(
+                            position,
+                            out vein,
+                            out veinKey,
+                            out resourceName,
+                            out distance))
+                    {
+                        Plugin.Logger?.LogWarning(
+                            $"[Epoch Drill] Existing drill [{drillId}] could not be " +
+                            $"matched to a physical vein and will remain unbound.");
+                        continue;
+                    }
                 }
 
                 if (IsVeinOccupied(veinKey))
@@ -459,6 +545,77 @@ namespace EpochNeural
         // ============================================================
         // REGISTRATION
         // ============================================================
+
+        /// <summary>
+        /// Registers a newly constructed extractor against the exact physical
+        /// vein already resolved during placement. This is authoritative for
+        /// buried/obstructed veins whose finished surface position can be much
+        /// farther than VEIN_BIND_RADIUS from the actual vein.
+        /// </summary>
+        public static bool TryRegisterDrillForVein(
+            int worldObjectId,
+            MachineGenerationGroupVein vein)
+        {
+            if (worldObjectId <= 0 || vein == null)
+                return false;
+
+            try
+            {
+                int veinKey = GetVeinWorldObjectId(vein);
+                if (veinKey <= 0)
+                {
+                    Plugin.Logger?.LogWarning(
+                        $"[Epoch Drill] Cannot register extractor [{worldObjectId}]: physical vein has no valid key.");
+                    return false;
+                }
+
+                string resourceName = GetVeinResourceName(vein);
+
+                if (IsVeinOccupied(veinKey))
+                {
+                    Plugin.Logger?.LogWarning(
+                        $"[Epoch Drill] Physical vein [{veinKey}] ({resourceName}) already has a Node Extractor.");
+                    return false;
+                }
+
+                int totalVeins = GetTotalVeinsOnCurrentPlanet();
+                if (_activeDrillRegistry.Count >= totalVeins)
+                {
+                    Plugin.Logger?.LogWarning(
+                        $"[Epoch Drill] Maximum Node Extractors reached: " +
+                        $"{_activeDrillRegistry.Count}/{totalVeins}.");
+                    return false;
+                }
+
+                _activeDrillRegistry[GetVeinRegistryKeyFromHash(veinKey)] =
+                    worldObjectId;
+
+                _drillResourceRegistry[worldObjectId] = resourceName;
+
+                var drillWorldObject =
+                    WorldObjectsHandler.Instance?.GetWorldObjectViaId(worldObjectId);
+
+                ApplyLockedResourceToWorldObject(
+                    drillWorldObject,
+                    resourceName);
+
+                _knownDrillIds.Add(worldObjectId);
+
+                Plugin.Logger?.LogInfo(
+                    $"[Epoch Drill] LOCKED extractor [{worldObjectId}] -> " +
+                    $"physical vein [{veinKey}] -> {resourceName} " +
+                    $"using placement-resolved physical vein.");
+
+                RefreshNetworkTelemetry();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogError(
+                    $"[Epoch Drill] TryRegisterDrillForVein failed for [{worldObjectId}]: {ex}");
+                return false;
+            }
+        }
 
         public static bool TryRegisterDrill(
             string sectorGroupId,
@@ -532,6 +689,12 @@ namespace EpochNeural
                         out var vein,
                         out _,
                         out string restoredResource,
+                        out _)
+                    || TryFindNearestVeinForLegacyBuriedDrill(
+                        wo.GetPosition(),
+                        out vein,
+                        out _,
+                        out restoredResource,
                         out _))
                 {
                     _drillResourceRegistry[worldObjectId] = restoredResource;
@@ -569,61 +732,8 @@ namespace EpochNeural
                 {
                     // Vanilla extractor UI reads this linked-group list. By
                     // reducing it to one group, the Epoch extractor has one
-                    // authoritative resource: the vein's resource.
+                    // authoritative selectable resource: the vein's resource.
                     worldObject.SetLinkedGroups(new List<Group> { resourceGroup });
-
-                    // --------------------------------------------------------
-                    // LOCK THE VANILLA ORE SELECTOR
-                    // --------------------------------------------------------
-                    // The T3 extractor template carries ActionGroupSelector,
-                    // which normally exposes Aluminium/Iron/etc. plus the
-                    // other vanilla mining groups. Epoch must never allow that
-                    // selector to change the already-bound vein resource.
-                    var drillObject = worldObject.GetGameObject();
-                    if (drillObject != null)
-                    {
-                        var selector = drillObject.GetComponentInChildren<ActionGroupSelector>(true);
-                        if (selector != null)
-                        {
-                            if (selector.oreList != null)
-                            {
-                                selector.oreList.Clear();
-                                GroupData resourceData = resourceGroup.GetGroupData();
-                                if (resourceData != null)
-                                    selector.oreList.Add(resourceData);
-                            }
-
-                            // Disable the vanilla selector action itself.
-                            // EpochDrillUiLockPatch also hard-blocks OnAction,
-                            // so this remains safe if Unity recreates/re-enables
-                            // the component later.
-                            selector.enabled = false;
-                        }
-
-                        // ----------------------------------------------------
-                        // SHOW THE LOCKED RESOURCE IN THE INVENTORY UI
-                        // ----------------------------------------------------
-                        // ActionOpenable feeds groupLoading into the standard
-                        // container UI. Setting it to the bound resource makes
-                        // the extractor's inventory/header display the actual
-                        // resource icon instead of the generic extractor icon.
-                        var actionOpenable =
-                            drillObject.GetComponentInChildren<ActionOpenable>(true);
-
-                        if (actionOpenable != null)
-                        {
-                            GroupData resourceData = resourceGroup.GetGroupData();
-                            if (resourceData != null)
-                            {
-                                actionOpenable.SetGroupLoading(resourceData);
-                                actionOpenable.showEmptyLoading = false;
-                            }
-                        }
-
-                        Plugin.Logger?.LogInfo(
-                            $"[Epoch Drill UI] Locked UI to resource [{resourceId}] " +
-                            $"for extractor [{worldObject.GetId()}].");
-                    }
                 }
                 else
                 {
