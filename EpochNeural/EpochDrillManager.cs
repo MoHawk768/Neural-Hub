@@ -132,10 +132,13 @@ namespace EpochNeural
                 for (int i = 0; i < _knownVeins.Count; i++)
                 {
                     var v = _knownVeins[i];
-                    Plugin.Logger?.LogInfo(
-                        $"[Epoch Drill] VEIN CACHE #{i + 1}: " +
-                        $"key={v.SignatureHash}, resource={v.ResourceId}, " +
-                        $"position={v.Position}");
+                    if (Plugin.DebugLogging)
+                    {
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Drill] VEIN CACHE #{i + 1}: " +
+                            $"key={v.SignatureHash}, resource={v.ResourceId}, " +
+                            $"position={v.Position}");
+                    }
                 }
 
                 return _knownVeins.Count > 0;

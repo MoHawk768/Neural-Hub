@@ -250,8 +250,12 @@ namespace EpochNeural
 
             int veinInstanceId = vein.GetInstanceID();
 
-            if (!_buildSiteCache.ContainsKey(veinInstanceId))
+            if (!_buildSiteCache.TryGetValue(
+                    veinInstanceId,
+                    out BuildSiteCacheEntry _))
+            {
                 _hasBuildSite = false;
+            }
 
             Vector3 veinPos = vein.transform.position;
 
@@ -586,9 +590,12 @@ namespace EpochNeural
                 {
                     bool valid = checker.GetPositioningStatus();
 
-                    Plugin.Logger?.LogInfo(
-                        $"[Epoch Vein Locator] Vanilla placement probe at " +
-                        $"{position} -> {(valid ? "VALID" : "INVALID")}.");
+                    if (Plugin.DebugLogging)
+                    {
+                        Plugin.Logger?.LogInfo(
+                            $"[Epoch Vein Locator] Vanilla placement probe at " +
+                            $"{position} -> {(valid ? "VALID" : "INVALID")}.");
+                    }
 
                     result?.Invoke(valid);
                 }
@@ -951,7 +958,7 @@ namespace EpochNeural
                 text.fontSize = fontSize;
                 text.fontStyle = style;
                 text.alignment = TextAlignmentOptions.Center;
-                text.enableWordWrapping = false;
+                text.textWrappingMode = TextWrappingModes.NoWrap;
                 text.raycastTarget = false;
 
                 return text;

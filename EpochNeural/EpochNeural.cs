@@ -87,7 +87,7 @@ namespace EpochNeural
         {
             try
             {
-                Plugin.Logger.LogInfo("[Epoch] Initializing Central Core...");
+                Plugin.Logger?.LogInfo("[Epoch] Initializing Central Core...");
 
                 RegisterEpochHub();
                 RegisterLocalization();
@@ -97,7 +97,7 @@ namespace EpochNeural
             }
             catch (Exception ex)
             {
-                Plugin.Logger.LogError($"[Epoch] System initialization failure: {ex}");
+                Plugin.Logger?.LogError($"[Epoch] System initialization failure: {ex}");
             }
         }
 
@@ -124,7 +124,7 @@ namespace EpochNeural
                 }
                 else
                 {
-                    Plugin.Logger.LogWarning(HubPlacementMessage);
+                    Plugin.Logger?.LogWarning(HubPlacementMessage);
                 }
                 return false;
             }
@@ -155,7 +155,7 @@ namespace EpochNeural
                 _activeHubId = latestHub.GetId();
                 _hubWorldObjectId = latestHub.GetId();
                 _currentTier = 1;
-                Plugin.Logger.LogInfo($"[Epoch] Hub placed and registered. ID: {_activeHubId}, Tier: 1");
+                Plugin.Logger?.LogInfo($"[Epoch] Hub placed and registered. ID: {_activeHubId}, Tier: 1");
 
                 if (EpochHubInventory != null)
                 {
@@ -172,7 +172,7 @@ namespace EpochNeural
             {
                 _activeHubId = -1;
                 _hubWorldObjectId = -1;
-                Plugin.Logger.LogInfo($"[Epoch] Hub destroyed. New hub can now be placed.");
+                Plugin.Logger?.LogInfo($"[Epoch] Hub destroyed. New hub can now be placed.");
             }
         }
 
@@ -215,7 +215,7 @@ namespace EpochNeural
                 var groups = GroupsHandler.GetAllGroups();
                 if (groups == null)
                 {
-                    Plugin.Logger.LogWarning("[Epoch] No groups found to hide items from.");
+                    Plugin.Logger?.LogWarning("[Epoch] No groups found to hide items from.");
                     return;
                 }
 
@@ -254,7 +254,7 @@ namespace EpochNeural
                     if (shouldRemove)
                     {
                         itemsToRemove.Add(group);
-                        Plugin.Logger.LogInfo($"[Epoch] Removing item from construction: {id}");
+                        Plugin.Logger?.LogInfo($"[Epoch] Removing item from construction: {id}");
                     }
                 }
 
@@ -265,11 +265,11 @@ namespace EpochNeural
                 }
 
                 GroupsHandler.SetAllGroups(groups);
-                Plugin.Logger.LogInfo($"[Epoch] Removed {removedCount} vanilla items from construction menu.");
+                Plugin.Logger?.LogInfo($"[Epoch] Removed {removedCount} vanilla items from construction menu.");
             }
             catch (Exception ex)
             {
-                Plugin.Logger.LogError($"[Epoch] Failed to hide vanilla items: {ex.Message}");
+                Plugin.Logger?.LogError($"[Epoch] Failed to hide vanilla items: {ex.Message}");
             }
         }
 
@@ -287,7 +287,7 @@ namespace EpochNeural
             if (HubExistsInWorld())
             {
                 ChangeGhostColor(__instance, Color.red);
-                Plugin.Logger.LogInfo("[Epoch] Hub ghost set to RED - hub already exists.");
+                Plugin.Logger?.LogInfo("[Epoch] Hub ghost set to RED - hub already exists.");
             }
             else
             {
@@ -356,7 +356,7 @@ namespace EpochNeural
             }
             catch (Exception ex)
             {
-                Plugin.Logger.LogWarning($"[Epoch] Could not change ghost color: {ex.Message}");
+                Plugin.Logger?.LogWarning($"[Epoch] Could not change ghost color: {ex.Message}");
             }
         }
 
@@ -375,7 +375,7 @@ namespace EpochNeural
 
             if (containerData == null)
             {
-                Plugin.Logger.LogError("[Epoch] Base blueprint data matching failed.");
+                Plugin.Logger?.LogError("[Epoch] Base blueprint data matching failed.");
                 return;
             }
 
@@ -408,7 +408,7 @@ namespace EpochNeural
                         if (buildingEnumValue != null)
                         {
                             field.SetValue(hubData, buildingEnumValue);
-                            Plugin.Logger.LogInfo("[Epoch Core] Placement type escalated to global building parameters successfully.");
+                            Plugin.Logger?.LogInfo("[Epoch Core] Placement type escalated to global building parameters successfully.");
                         }
                     }
                     catch
@@ -435,7 +435,7 @@ namespace EpochNeural
             groups.Add(epochHub);
             GroupsHandler.SetAllGroups(groups);
 
-            Plugin.Logger.LogInfo("[Epoch] Epoch Hub data registered securely as a zero-cost build asset.");
+            Plugin.Logger?.LogInfo("[Epoch] Epoch Hub data registered securely as a zero-cost build asset.");
         }
 
         private static void RegisterLocalization()

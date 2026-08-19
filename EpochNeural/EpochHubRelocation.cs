@@ -697,7 +697,7 @@ namespace EpochNeural
             tmp.text = text;
             tmp.fontSize = fontSize;
             tmp.font = TMP_Settings.defaultFontAsset;
-            tmp.enableWordWrapping = true;
+            tmp.textWrappingMode = TextWrappingModes.Normal;
 
             return tmp;
         }

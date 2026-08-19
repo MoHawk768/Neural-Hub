@@ -12,11 +12,9 @@ namespace EpochNeural
         public const string PluginName = "Epoch Neural Crate System";
         public const string PluginVersion = "2.0.0";
 
-        /// <summary>
-        /// Master switch for development logging.
-        /// Set to false for release builds.
-        /// </summary>
-        internal const bool DebugLogging = true;
+        // Development-only logging switch.
+        // Kept for project compatibility; critical logging remains enabled.
+        internal static bool DebugLogging = false;
 
         internal static new ManualLogSource Logger;
 
@@ -35,7 +33,7 @@ namespace EpochNeural
 
             try
             {
-                Harmony harmony = new Harmony(PluginGUID);
+                var harmony = new Harmony(PluginGUID);
                 harmony.PatchAll();
 
                 Logger.LogInfo("[BOOT] Harmony patches applied.");

@@ -227,7 +227,7 @@ namespace EpochNeural
             string machineGroupId)
         {
             return !string.IsNullOrEmpty(machineGroupId) &&
-                   MachineRules.ContainsKey(machineGroupId);
+                   MachineRules.TryGetValue(machineGroupId, out _);
         }
 
         internal static void RegisterMachine(

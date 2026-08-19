@@ -4,7 +4,6 @@ using SpaceCraft;
 using HarmonyLib;
 using System;
 using System.Collections;
-using System.Collections.Generic;
 
 namespace EpochNeural
 {
@@ -419,7 +418,7 @@ namespace EpochNeural
                 }
                 catch (System.Exception ex)
                 {
-                    Plugin.Logger.LogError($"[Epoch Visuals] Rendering pipeline exception: {ex}");
+                    Plugin.Logger?.LogError($"[Epoch Visuals] Rendering pipeline exception: {ex}");
                 }
 
                 enforcementCycles--;

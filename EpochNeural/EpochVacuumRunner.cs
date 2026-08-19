@@ -38,22 +38,16 @@ namespace EpochNeural
 
             EpochDrillExtractionEngine.InitializeEngine(go);
 
-            if (Plugin.Logger != null)
-            {
-                Plugin.Logger.LogInfo(
-                    "EpochVacuumRunner, EpochHud, Vein Locator, and Drill Engine attached to persistent context.");
-            }
+            Plugin.Logger?.LogInfo(
+                "EpochVacuumRunner, EpochHud, Vein Locator, and Drill Engine attached to persistent context.");
         }
 
         public static void StopRunner()
         {
             if (_instance != null)
             {
-                if (Plugin.Logger != null)
-                {
-                    Plugin.Logger.LogInfo(
-                        "Stopping EpochVacuumRunner and cleaning up game objects.");
-                }
+                Plugin.Logger?.LogInfo(
+                    "Stopping EpochVacuumRunner and cleaning up game objects.");
 
                 Destroy(_instance.gameObject);
                 _instance = null;
@@ -97,7 +91,7 @@ namespace EpochNeural
             {
                 _lastLogTime = Time.time;
                 Plugin.Logger?.LogInfo(
-                    "EpochVacuumRunner background thread processing normal.");
+                    "EpochVacuumRunner processing normally.");
             }
         }
     }

@@ -56,10 +56,6 @@ namespace EpochNeural
         private static readonly Color CyanColor = new Color(0.0f, 0.8f, 1.0f);
         private static readonly Color RedColor = new Color(1.0f, 0.2f, 0.2f);
 
-        private double _cachedCurrentTi = 0;
-        private double _cachedTiRate = 0;
-        private double _cachedTargetTi = 0;
-        private string _cachedNextTierName = "";
 
         private void Awake()
         {
@@ -192,7 +188,7 @@ namespace EpochNeural
             tmp.fontSize = size;
             tmp.color = c;
             tmp.alignment = TextAlignmentOptions.TopLeft;
-            tmp.enableWordWrapping = false;
+            tmp.textWrappingMode = TextWrappingModes.NoWrap;
             tmp.overflowMode = TextOverflowModes.Overflow;
             tmp.text = "...";
             return tmp;
@@ -227,37 +223,37 @@ namespace EpochNeural
 
                     if (worldReady && _isVisible)
                     {
-                    try
-                    {
-                        if (_txtHeader != null)
+                        try
                         {
-                            var tierData = EpochNeural.CurrentTierData;
-                            string tierName = tierData?.Name ?? "Epoch Hub";
-                            _txtHeader.text = $"Epoch Neural Network [{tierName}]";
+                            if (_txtHeader != null)
+                            {
+                                var tierData = EpochNeural.CurrentTierData;
+                                string tierName = tierData?.Name ?? "Epoch Hub";
+                                _txtHeader.text = $"Epoch Neural Network [{tierName}]";
+                            }
+                            if (_txtStatus != null)
+                            {
+                                _txtStatus.text = _txtStatusContent;
+                                _txtStatus.color = _statusColor;
+                            }
+                            if (_txtPlanet != null) _txtPlanet.text = _txtPlanetContent;
+                            if (_txtDiscovery != null) _txtDiscovery.text = _txtDiscoveryContent;
+                            if (_txtDrillHeader != null) _txtDrillHeader.text = _txtDrillHeaderContent;
+                            if (_txtMapDrills != null) _txtMapDrills.text = _txtMapDrillsContent;
+                            if (_txtLandingDrill != null) _txtLandingDrill.text = _txtLandingDrillContent;
+                            if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
+                            if (_txtCount != null) _txtCount.text = _txtCountContent;
+                            if (_txtStackCap != null)
+                            {
+                                var tierData = EpochNeural.CurrentTierData;
+                                int stackCap = tierData?.StackCap ?? 25;
+                                _txtStackCap.text = $"Stack Cap            : {stackCap}";
+                            }
                         }
-                        if (_txtStatus != null)
+                        catch (Exception ex)
                         {
-                            _txtStatus.text = _txtStatusContent;
-                            _txtStatus.color = _statusColor;
+                            Plugin.Logger.LogWarning($"[Epoch HUD] Update loop error: {ex.Message}");
                         }
-                        if (_txtPlanet != null) _txtPlanet.text = _txtPlanetContent;
-                        if (_txtDiscovery != null) _txtDiscovery.text = _txtDiscoveryContent;
-                        if (_txtDrillHeader != null) _txtDrillHeader.text = _txtDrillHeaderContent;
-                        if (_txtMapDrills != null) _txtMapDrills.text = _txtMapDrillsContent;
-                        if (_txtLandingDrill != null) _txtLandingDrill.text = _txtLandingDrillContent;
-                        if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
-                        if (_txtCount != null) _txtCount.text = _txtCountContent;
-                        if (_txtStackCap != null)
-                        {
-                            var tierData = EpochNeural.CurrentTierData;
-                            int stackCap = tierData?.StackCap ?? 25;
-                            _txtStackCap.text = $"Stack Cap            : {stackCap}";
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Plugin.Logger.LogWarning($"[Epoch HUD] Update loop error: {ex.Message}");
-                    }
                     }
                 }
                 yield return new WaitForSeconds(0.2f);

@@ -52,8 +52,8 @@ namespace EpochNeural
                     {
                         if (item == null || item.GetGroup() == null) continue;
                         string id = item.GetGroup().GetId();
-                        if (combinedResourceLedger.ContainsKey(id))
-                            combinedResourceLedger[id]++;
+                        if (combinedResourceLedger.TryGetValue(id, out int count))
+                            combinedResourceLedger[id] = count + 1;
                         else
                             combinedResourceLedger.Add(id, 1);
                     }
@@ -69,8 +69,8 @@ namespace EpochNeural
                         {
                             if (item == null || item.GetGroup() == null || item.GetIsLockedInInventory()) continue;
                             string id = item.GetGroup().GetId();
-                            if (combinedResourceLedger.ContainsKey(id))
-                                combinedResourceLedger[id]++;
+                            if (combinedResourceLedger.TryGetValue(id, out int count))
+                                combinedResourceLedger[id] = count + 1;
                             else
                                 combinedResourceLedger.Add(id, 1);
                         }

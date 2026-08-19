@@ -75,8 +75,8 @@ namespace EpochNeural
 
                         if (!string.IsNullOrEmpty(id))
                         {
-                            if (result.ResourceCounts.ContainsKey(id))
-                                result.ResourceCounts[id]++;
+                            if (result.ResourceCounts.TryGetValue(id, out int count))
+                                result.ResourceCounts[id] = count + 1;
                             else
                                 result.ResourceCounts.Add(id, 1);
                         }
@@ -94,15 +94,15 @@ namespace EpochNeural
             // DEVELOPMENT DIAGNOSTICS
             // --------------------------------------------------------
 
-            Plugin.Logger.LogInfo("");
-            Plugin.Logger.LogInfo("==================================================");
-            Plugin.Logger.LogInfo("[DISCOVERY] Epoch World Scan");
-            Plugin.Logger.LogInfo("==================================================");
-            Plugin.Logger.LogInfo($"Associated Objects : {result.TotalAssociatedObjects}");
-            Plugin.Logger.LogInfo($"Collectible Objects: {result.ReturnedObjects}");
-            Plugin.Logger.LogInfo($"Linked Inventories : {result.InventoryLinkedObjects}");
-            Plugin.Logger.LogInfo($"Missing WorldObjs  : {result.MissingWorldObjects}");
-            Plugin.Logger.LogInfo("");
+            Plugin.Logger?.LogInfo("");
+            Plugin.Logger?.LogInfo("==================================================");
+            Plugin.Logger?.LogInfo("[DISCOVERY] Epoch World Scan");
+            Plugin.Logger?.LogInfo("==================================================");
+            Plugin.Logger?.LogInfo($"Associated Objects : {result.TotalAssociatedObjects}");
+            Plugin.Logger?.LogInfo($"Collectible Objects: {result.ReturnedObjects}");
+            Plugin.Logger?.LogInfo($"Linked Inventories : {result.InventoryLinkedObjects}");
+            Plugin.Logger?.LogInfo($"Missing WorldObjs  : {result.MissingWorldObjects}");
+            Plugin.Logger?.LogInfo("");
 
             foreach (var pair in result.ResourceCounts)
             {
@@ -110,8 +110,8 @@ namespace EpochNeural
                     $"{pair.Key.PadRight(18)} : {pair.Value}");
             }
 
-            Plugin.Logger.LogInfo("==================================================");
-            Plugin.Logger.LogInfo("");
+            Plugin.Logger?.LogInfo("==================================================");
+            Plugin.Logger?.LogInfo("");
 
             return result;
         }
