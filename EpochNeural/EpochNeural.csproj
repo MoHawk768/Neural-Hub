@@ -85,6 +85,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EpochAutoCrafterSupply.cs" />
     <Compile Include="EpochDrillUiLockPatch.cs" />
     <Compile Include="EpochDrillVeinBindingPatch.cs" />
     <Compile Include="EpochFoodGrowerProtection.cs" />

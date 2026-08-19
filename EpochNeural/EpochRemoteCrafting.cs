@@ -123,9 +123,21 @@ namespace EpochNeural
                 if (group == null || (EpochNeural.EpochHubInventory != null && __instance.GetId() == EpochNeural.EpochHubInventory.GetId()))
                     return true;
 
-                // Check local inventory first
-                if (__instance.ContainGroup(group))
-                    return true;
+                // Check local inventory directly.
+                // IMPORTANT: this patch targets Inventory.ContainGroup itself, so
+                // calling __instance.ContainGroup(group) here would re-enter this
+                // Harmony prefix recursively and can hard-crash the game when
+                // machines such as AutoCrafter query their inventory repeatedly.
+                var localItems = __instance.GetInsideWorldObjects();
+                if (localItems != null)
+                {
+                    string requiredId = group.GetId();
+                    foreach (WorldObject localItem in localItems)
+                    {
+                        if (localItem?.GetGroup()?.GetId() == requiredId)
+                            return true;
+                    }
+                }
 
                 // Check Hub database registry
                 int hubCount = EpochHubLogistics.GetResourceCount(group.GetId());
@@ -191,6 +203,17 @@ namespace EpochNeural
             {
                 if (!__result) return;
 
+                // IMPORTANT:
+                // AutoCrafter inputs are now supplied physically by Epoch's
+                // machine-logistics pass.  Do NOT also consume those recipe
+                // ingredients from the Hub here.  The vanilla AutoCrafter
+                // must own the crafting transaction from this point onward.
+                if (IsAutoCrafterCrafter(sourceCrafter))
+                {
+                    Plugin.Logger?.LogInfo($"[Epoch Craft] AutoCrafter craft detected; skipping remote ingredient consumption for {groupItem?.GetId()}.");
+                    return;
+                }
+
                 var recipe = groupItem.GetRecipe();
                 if (recipe == null) return;
 
@@ -214,6 +237,15 @@ namespace EpochNeural
             {
                 if (!__result) return;
 
+                // Same protection for world-instanced AutoCrafter crafting.
+                // Epoch machine logistics supplies the physical ingredients;
+                // vanilla crafting handles their consumption.
+                if (IsAutoCrafterCrafter(sourceCrafter))
+                {
+                    Plugin.Logger?.LogInfo($"[Epoch Craft] AutoCrafter world craft detected; skipping remote ingredient consumption for {groupItem?.GetId()}.");
+                    return;
+                }
+
                 var recipe = groupItem.GetRecipe();
                 if (recipe == null) return;
 
@@ -227,6 +259,99 @@ namespace EpochNeural
             {
                 Plugin.Logger?.LogError($"[Epoch Craft] Physical coordinate instancing sync error: {ex.Message}");
             }
+        }
+
+        // ============================================================
+        // AUTO-CRAFTER SOURCE DETECTION
+        // ============================================================
+        // Keep normal player remote crafting intact.  Only bypass the old
+        // shared-Hub consumption path when CraftManager is being driven by
+        // an AutoCrafter.  Reflection is deliberately defensive because the
+        // ActionCrafter internals differ between Planet Crafter builds.
+        private static bool IsAutoCrafterCrafter(ActionCrafter sourceCrafter)
+        {
+            if (sourceCrafter == null)
+                return false;
+
+            try
+            {
+                // Fast path: Unity hierarchy/name information.
+                var component = sourceCrafter as UnityEngine.Component;
+                if (component != null)
+                {
+                    Transform current = component.transform;
+                    while (current != null)
+                    {
+                        if (!string.IsNullOrEmpty(current.name) &&
+                            current.name.IndexOf("AutoCrafter", StringComparison.OrdinalIgnoreCase) >= 0)
+                            return true;
+
+                        current = current.parent;
+                    }
+                }
+
+                // Defensive reflection path: look for a WorldObject/Group
+                // reference carried by the ActionCrafter implementation.
+                Type type = sourceCrafter.GetType();
+                const BindingFlags flags = BindingFlags.Instance |
+                                           BindingFlags.Public |
+                                           BindingFlags.NonPublic;
+
+                foreach (FieldInfo field in type.GetFields(flags))
+                {
+                    object value;
+                    try { value = field.GetValue(sourceCrafter); }
+                    catch { continue; }
+
+                    if (IsAutoCrafterReference(value))
+                        return true;
+                }
+
+                foreach (PropertyInfo property in type.GetProperties(flags))
+                {
+                    if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                        continue;
+
+                    object value;
+                    try { value = property.GetValue(sourceCrafter, null); }
+                    catch { continue; }
+
+                    if (IsAutoCrafterReference(value))
+                        return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger?.LogDebug($"[Epoch Craft] AutoCrafter source detection skipped safely: {ex.Message}");
+            }
+
+            return false;
+        }
+
+        private static bool IsAutoCrafterReference(object value)
+        {
+            if (value == null)
+                return false;
+
+            try
+            {
+                if (value is WorldObject worldObject)
+                {
+                    string id = worldObject.GetGroup()?.GetId();
+                    return !string.IsNullOrEmpty(id) &&
+                           id.IndexOf("AutoCrafter", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+
+                if (value is Group group)
+                {
+                    string id = group.GetId();
+                    return !string.IsNullOrEmpty(id) &&
+                           id.IndexOf("AutoCrafter", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+            }
+            catch { }
+
+            return false;
         }
 
         // ============================================================
