@@ -22,7 +22,6 @@ namespace EpochNeural
         private TextMeshProUGUI _txtDiscovery;
         private TextMeshProUGUI _txtDrillHeader;
         private TextMeshProUGUI _txtMapDrills;
-        private TextMeshProUGUI _txtLandingDrill;
         private TextMeshProUGUI _txtLeft;
         private TextMeshProUGUI _txtCount;
         private TextMeshProUGUI _txtStackCap;
@@ -35,7 +34,6 @@ namespace EpochNeural
         private string _txtDiscoveryContent = "Biome Resource Discovered: 0 / 0";
         private string _txtDrillHeaderContent = "NODE EXTRACTORS";
         private string _txtMapDrillsContent = "Map: 0 / 0";
-        private string _txtLandingDrillContent = "Landing: 0 / 1";
         private string _txtLeftContent = "Biome Resources Left : 0";
         private string _txtCountContent = "Hub Item Count       : 0";
         private bool _isVisible = true;
@@ -56,7 +54,6 @@ namespace EpochNeural
         private static readonly Color CyanColor = new Color(0.0f, 0.8f, 1.0f);
         private static readonly Color RedColor = new Color(1.0f, 0.2f, 0.2f);
 
-
         private void Awake()
         {
             if (Instance != null && Instance != this) { Destroy(this.gameObject); return; }
@@ -71,15 +68,11 @@ namespace EpochNeural
 
         private IEnumerator InitializeHudRoutine()
         {
-            // Do not create/show the Epoch HUD on the splash screen,
-            // main menu, save-selection screen, or other non-world UI.
-            // A real player + current planet must exist first.
             while (!IsGameWorldReady())
             {
                 yield return new WaitForSeconds(0.25f);
             }
 
-            // Give the game UI a moment to finish attaching the player/world.
             yield return new WaitForSeconds(0.5f);
 
             CreateHudElements();
@@ -111,16 +104,14 @@ namespace EpochNeural
                 _panelObject.transform.SetParent(_hudCanvasObject.transform, false);
                 RectTransform rect = _panelObject.AddComponent<RectTransform>();
 
-                // Position at bottom-left, just above the vitals bars
                 rect.anchorMin = new Vector2(0, 0);
                 rect.anchorMax = new Vector2(0, 0);
                 rect.pivot = new Vector2(0, 0);
                 rect.anchoredPosition = new Vector2(45, 195);
-                rect.sizeDelta = new Vector2(620, 430);
+                rect.sizeDelta = new Vector2(620, 390);
 
                 _panelObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
 
-                // Status line - bold red, above header
                 _txtStatus = CreateGenericTextObject("LineStatus", new Vector2(0, 0), 24, RedColor);
                 _txtStatus.text = _txtStatusContent;
                 _txtStatus.fontStyle = FontStyles.Bold;
@@ -129,7 +120,6 @@ namespace EpochNeural
                 statusRect.anchoredPosition = new Vector2(15, -10);
                 statusRect.sizeDelta = new Vector2(-30, 35);
 
-                // Header with tier name
                 _txtHeader = CreateGenericTextObject("Line1", new Vector2(15, -45), 22, GoldColor);
                 _txtHeader.text = "Epoch Neural Network";
                 _txtHeader.fontStyle = FontStyles.Bold;
@@ -140,21 +130,17 @@ namespace EpochNeural
 
                 _txtDiscovery = CreateGenericTextObject("Line2", new Vector2(15, -105), 18, GreenColor);
 
-                // Node Extractor telemetry is deliberately split into separate rows.
-                // This prevents the Map/Landing values from overlapping the following
-                // resource and inventory rows on different screen scales.
                 _txtDrillHeader = CreateGenericTextObject("LineDrillHeader", new Vector2(15, -133), 18, BrightGreenColor);
                 _txtDrillHeader.fontStyle = FontStyles.Bold;
 
-                _txtMapDrills = CreateGenericTextObject("LineMapDrills", new Vector2(15, -157), 17, GreenColor);
-                _txtLandingDrill = CreateGenericTextObject("LineLandingDrill", new Vector2(15, -180), 17, GreenColor);
+                _txtMapDrills = CreateGenericTextObject("LineMapDrills", new Vector2(15, -155), 17, GreenColor);
 
-                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -207), 18, GreenColor);
-                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -235), 18, GreenColor);
-                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -263), 18, GreenColor);
-                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -291), 18, CyanColor);
+                _txtLeft = CreateGenericTextObject("Line4", new Vector2(15, -182), 18, GreenColor);
+                _txtCount = CreateGenericTextObject("Line5", new Vector2(15, -210), 18, GreenColor);
+                _txtStackCap = CreateGenericTextObject("Line6", new Vector2(15, -238), 18, GreenColor);
+                _txtNextUpgrade = CreateGenericTextObject("Line7", new Vector2(15, -266), 18, CyanColor);
 
-                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -330), 18, BrightGreenColor);
+                _txtNotification = CreateGenericTextObject("LineNotification", new Vector2(15, -305), 18, BrightGreenColor);
                 _txtNotification.text = "";
                 _txtNotification.gameObject.SetActive(false);
 
@@ -240,7 +226,6 @@ namespace EpochNeural
                             if (_txtDiscovery != null) _txtDiscovery.text = _txtDiscoveryContent;
                             if (_txtDrillHeader != null) _txtDrillHeader.text = _txtDrillHeaderContent;
                             if (_txtMapDrills != null) _txtMapDrills.text = _txtMapDrillsContent;
-                            if (_txtLandingDrill != null) _txtLandingDrill.text = _txtLandingDrillContent;
                             if (_txtLeft != null) _txtLeft.text = _txtLeftContent;
                             if (_txtCount != null) _txtCount.text = _txtCountContent;
                             if (_txtStackCap != null)
@@ -282,7 +267,6 @@ namespace EpochNeural
                 if (_txtNextUpgrade == null)
                     return;
 
-                // Check if Hub is active - if not, show "ENTER HUB TO ACTIVATE"
                 if (!EpochVacuumSystem.IsInitialized() || EpochNeural.EpochHubInventory == null)
                 {
                     _txtNextUpgrade.text = "Next Upgrade         : --";
@@ -380,7 +364,6 @@ namespace EpochNeural
             }
             catch (Exception ex)
             {
-                // Only log if not a null reference (which happens when Hub isn't active)
                 if (!(ex is NullReferenceException))
                 {
                     Plugin.Logger.LogWarning($"[Epoch HUD] ETA update error: {ex.Message}");
@@ -435,10 +418,6 @@ namespace EpochNeural
             }
         }
 
-        // ============================================================
-        // NOTIFICATION SYSTEM
-        // ============================================================
-
         public void ShowNotification(string message, bool isSuccess = true)
         {
             if (_txtNotification == null) return;
@@ -487,10 +466,6 @@ namespace EpochNeural
             _notificationCoroutine = null;
         }
 
-        // ============================================================
-        // UPDATE METHODS
-        // ============================================================
-
         public void UpdateHud(bool hubActive, int worldObjects, int containerItemCount)
         {
             if (!_hudInitialized || !IsGameWorldReady()) return;
@@ -498,11 +473,7 @@ namespace EpochNeural
             int localAvailable = 0;
             int localLearned = 0;
 
-            // Keep map/biome extractors and the single Landing Area extractor separate.
-            // GetActiveDrillsCount() intentionally combines them for placement limits,
-            // but the HUD should not combine them.
             int mapDrillsCount = EpochDrillManager.GetActiveBiomeDrillsCount();
-            bool landingDrillPresent = EpochDrillManager.IsLandingZoneOccupied();
 
             if (hubActive)
             {
@@ -589,14 +560,10 @@ namespace EpochNeural
 
             _txtDiscoveryContent = $"Biome Resource Discovered: {learned} / {available}";
 
-            // The 'activeDrills' parameter is retained for compatibility with existing
-            // callers. We deliberately read the two registry states directly here.
             int mapDrills = EpochDrillManager.GetActiveBiomeDrillsCount();
-            bool landingDrill = EpochDrillManager.IsLandingZoneOccupied();
 
             _txtDrillHeaderContent = "NODE EXTRACTORS";
             _txtMapDrillsContent = $"Map: {mapDrills} / {_planetMaxDrillGoal}";
-            _txtLandingDrillContent = $"Landing: {(landingDrill ? 1 : 0)} / 1";
 
             _txtLeftContent = $"Biome Resources Left : {left:N0}";
             _txtCountContent = $"Hub Item Count       : {count:N0}";
@@ -607,10 +574,6 @@ namespace EpochNeural
             _isVisible = !_isVisible;
             if (_panelObject != null) _panelObject.SetActive(_isVisible);
         }
-
-        // ============================================================
-        // HELPER METHODS
-        // ============================================================
 
         private bool IsGameWorldReady()
         {

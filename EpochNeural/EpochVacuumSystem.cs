@@ -316,6 +316,32 @@ namespace EpochNeural
                 if (groupId.Contains("OreExtractor"))
                     continue;
 
+                // ============================================================
+                // SKIP VEGETUBES - They need time to grow seeds
+                // ============================================================
+                if (groupId == "Vegetube1" ||
+                    groupId == "Vegetube2" ||
+                    groupId == "Vegetube3" ||
+                    groupId.Contains("Vegetube") ||
+                    groupId.Contains("Grower") ||
+                    groupId.Contains("Vegetable") ||
+                    groupId.Contains("Vegetation") ||
+                    groupId.Contains("Farm") ||
+                    groupId == "VegetableGrower1" ||
+                    groupId == "VegetableGrower2" ||
+                    groupId == "VegetableGrower3" ||
+                    groupId == "VegetationGrower1" ||
+                    groupId == "VegetationGrower2" ||
+                    groupId == "VegetationGrower3" ||
+                    groupId == "Vegetable0Growable" ||
+                    groupId == "Vegetable1Growable" ||
+                    groupId == "Vegetable2Growable" ||
+                    groupId == "Vegetable3Growable")
+                {
+                    Plugin.Logger?.LogDebug($"[Epoch Hub] Skipping grower machine: {groupId}");
+                    continue;
+                }
+
                 // Check if this machine has an inventory
                 int inventoryId = wo.GetLinkedInventoryId();
                 if (inventoryId == 0) continue;
