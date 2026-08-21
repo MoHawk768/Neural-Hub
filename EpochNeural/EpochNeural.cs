@@ -28,11 +28,11 @@ namespace EpochNeural
 
         public static readonly List<HubTierData> HubTiers = new List<HubTierData>
         {
-            new HubTierData { Tier = 1, Name = "Epoch Hub", Budget = 50, StackCap = 50, UnlockTi = 0, StageName = "Barren" },
-            new HubTierData { Tier = 2, Name = "Neural Mesh", Budget = 100, StackCap = 200, UnlockTi = 350000, StageName = "Clouds" },
-            new HubTierData { Tier = 3, Name = "Synaptic Drive", Budget = 150, StackCap = 400, UnlockTi = 3000000, StageName = "Liquid Water" },
-            new HubTierData { Tier = 4, Name = "Quantum Core", Budget = 200, StackCap = 700, UnlockTi = 700000000, StageName = "Flora" },
-            new HubTierData { Tier = 5, Name = "Epoch Singularity", Budget = 250, StackCap = 1000, UnlockTi = 120000000000, StageName = "Fish" }
+            new HubTierData { Tier = 1, Name = "Epoch Hub", Budget = 100, StackCap = 50, UnlockTi = 0, StageName = "Barren" },
+            new HubTierData { Tier = 2, Name = "Neural Mesh", Budget = 200, StackCap = 200, UnlockTi = 350000, StageName = "Clouds" },
+            new HubTierData { Tier = 3, Name = "Synaptic Drive", Budget = 300, StackCap = 400, UnlockTi = 3000000, StageName = "Liquid Water" },
+            new HubTierData { Tier = 4, Name = "Quantum Core", Budget = 400, StackCap = 700, UnlockTi = 700000000, StageName = "Flora" },
+            new HubTierData { Tier = 5, Name = "Epoch Singularity", Budget = 500, StackCap = 1000, UnlockTi = 120000000000, StageName = "Fish" }
         };
 
         private static int _currentTier = 1;

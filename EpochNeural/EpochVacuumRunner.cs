@@ -69,13 +69,19 @@ namespace EpochNeural
 
             if (!_hasRefreshedOnLoad && EpochNeural.EpochHubInventory != null)
             {
+                // 1. Resolve tier settings and visual stacks
                 EpochHubLogistics.RefreshStacksOnLoad();
+
+                // 2. Memory loading is now handled safely by HubExistsInWorld upon discovery!
+
+                // 3. Sync extraction network drills
                 EpochDrillManager.RefreshRegistryFromWorld();
 
                 _hasRefreshedOnLoad = true;
                 Plugin.Logger?.LogInfo(
-                    "[Epoch] Refreshed stacks and drill registry on load.");
+                    "[Epoch] Refreshed stacks, restored self-learning memory, and synced drill registry on load.");
             }
+
 
             try
             {

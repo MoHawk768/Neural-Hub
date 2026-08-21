@@ -44,8 +44,42 @@ namespace EpochNeural
             _hubInventory = inventory;
             EpochNeural.EpochHubInventory = inventory;
 
+            // NEW: Resolve the Hub's physical WorldObject ID directly from its inventory link
+            int resolvedHubId = 0;
+            var worldObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
+            if (worldObjects != null)
+            {
+                foreach (var wo in worldObjects)
+                {
+                    if (wo != null && wo.GetLinkedInventoryId() == inventory.GetId())
+                    {
+                        resolvedHubId = wo.GetId();
+                        break;
+                    }
+                }
+            }
+
+            // NEW: Load the memory file using our dynamically resolved ID instance
+            if (resolvedHubId > 0)
+            {
+                try
+                {
+                    string filePath = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, $"EpochHub_Learned_{resolvedHubId}.txt");
+                    if (System.IO.File.Exists(filePath))
+                    {
+                        string savedData = System.IO.File.ReadAllText(filePath);
+                        ImportLearnedResourcesFromString(savedData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Logger?.LogError($"Failed to read memory file on dynamic initialization: {ex.Message}");
+                }
+            }
+
             // Get initial tier data
             UpdateTierData();
+
 
             if (!_initialized)
             {
@@ -161,6 +195,33 @@ namespace EpochNeural
             LearnInventoryResources();
         }
 
+        /// <summary>
+        /// Exports the learned resources HashSet to a comma-separated string.
+        /// </summary>
+        internal static string ExportLearnedResourcesToString()
+        {
+            return string.Join(",", _learnedResources);
+        }
+
+        /// <summary>
+        /// Imports learned resources from a saved comma-separated string.
+        /// </summary>
+        internal static void ImportLearnedResourcesFromString(string data)
+        {
+            if (string.IsNullOrEmpty(data)) return;
+
+            string[] ids = data.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string id in ids)
+            {
+                string trimmed = id.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                {
+                    _learnedResources.Add(trimmed);
+                }
+            }
+            Plugin.Logger?.LogInfo($"[Epoch Hub] Restored {_learnedResources.Count} learned resources from save metadata.");
+        }
+
         private static void LearnInventoryResources()
         {
             if (_hubInventory == null) return;
@@ -168,13 +229,30 @@ namespace EpochNeural
             var items = _hubInventory.GetInsideWorldObjects();
             if (items == null) return;
 
+            bool newlyLearned = false;
             foreach (WorldObject wo in items)
             {
                 if (wo == null) continue;
                 string id = GetGroupId(wo);
                 if (string.IsNullOrEmpty(id)) continue;
-                _learnedResources.Add(id);
+
+                if (_learnedResources.Add(id))
+                {
+                    newlyLearned = true;
+                }
             }
+
+            if (newlyLearned && EpochNeural.HubWorldObjectId > 0)
+            {
+                try
+                {
+                    string filePath = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, $"EpochHub_Learned_{EpochNeural.HubWorldObjectId}.txt");
+                    System.IO.File.WriteAllText(filePath, ExportLearnedResourcesToString());
+                    Plugin.Logger?.LogInfo("[Epoch Hub] Learned memory updated and saved to local config file.");
+                }
+                catch (Exception ex) { Plugin.Logger?.LogError($"Failed to save memory file: {ex.Message}"); }
+            }
+
         }
 
         // ============================================================

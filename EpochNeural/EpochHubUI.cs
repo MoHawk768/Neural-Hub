@@ -56,6 +56,8 @@ namespace EpochNeural
 
             _startupStabilizeCoroutine = __instance.StartCoroutine(StabilizeHubWindow(__instance));
 
+            __instance.SetContainerName("Epoch Hub");
+
             Plugin.Logger.LogInfo("[UI] Epoch Hub open session initialized successfully.");
         }
 
