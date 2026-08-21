@@ -1,4 +1,5 @@
-﻿using SpaceCraft;
+﻿using HarmonyLib;
+using SpaceCraft;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -373,9 +374,7 @@ namespace EpochNeural
             var constructedObjects = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
             if (constructedObjects == null) return 0;
 
-            // Snapshot the collection to avoid modification during enumeration
             var machineObjects = new List<WorldObject>(constructedObjects);
-
             int totalCollected = 0;
             int budgetUsed = 0;
 
@@ -386,106 +385,89 @@ namespace EpochNeural
 
                 string groupId = wo.GetGroup().GetId();
 
-                // Skip siphoning the Hub itself so it doesn't process its own inventory
                 if (groupId == EpochNeural.HubId)
                     continue;
 
-                // Skip vanilla Ore Extractors (they're hidden anyway)
-
-                if (groupId.Contains("OreExtractor"))
+                // Authoritative check: If it's our explicit custom drill asset, NEVER skip it!
+                if (groupId.Contains("OreExtractor") && groupId != "Epoch_Node_Drill" && string.IsNullOrEmpty(EpochDrillManager.GetBoundResourceId(wo.GetId())))
                     continue;
 
-                // ============================================================
-                // SKIP VEGETUBES - They need time to grow seeds
-                // ============================================================
-                if (groupId == "Vegetube1" ||
-                    groupId == "Vegetube2" ||
-                    groupId == "Vegetube3" ||
-                    groupId.Contains("Vegetube") ||
-                    groupId.Contains("Grower") ||
-                    groupId.Contains("Vegetable") ||
-                    groupId.Contains("Vegetation") ||
-                    groupId.Contains("Farm") ||
-                    groupId == "VegetableGrower1" ||
-                    groupId == "VegetableGrower2" ||
-                    groupId == "VegetableGrower3" ||
-                    groupId == "VegetationGrower1" ||
-                    groupId == "VegetationGrower2" ||
-                    groupId == "VegetationGrower3" ||
-                    groupId == "Vegetable0Growable" ||
-                    groupId == "Vegetable1Growable" ||
-                    groupId == "Vegetable2Growable" ||
-                    groupId == "Vegetable3Growable")
+
+                if (groupId == "Vegetube1" || groupId == "Vegetube2" || groupId == "Vegetube3" ||
+                    groupId.Contains("Vegetube") || groupId.Contains("Grower") || groupId.Contains("Vegetable") ||
+                    groupId.Contains("Vegetation") || groupId.Contains("Farm") ||
+                    groupId == "VegetableGrower1" || groupId == "VegetableGrower2" || groupId == "VegetableGrower3" ||
+                    groupId == "VegetationGrower1" || groupId == "VegetationGrower2" || groupId == "VegetationGrower3" ||
+                    groupId == "Vegetable0Growable" || groupId == "Vegetable1Growable" || groupId == "Vegetable2Growable" || groupId == "Vegetable3Growable")
                 {
-                    Plugin.Logger?.LogDebug($"[Epoch Hub] Skipping grower machine: {groupId}");
                     continue;
                 }
 
-                // Check if this machine has an inventory
                 int inventoryId = wo.GetLinkedInventoryId();
                 if (inventoryId == 0) continue;
 
                 Inventory machineInventory = InventoriesHandler.Instance.GetInventoryById(inventoryId);
                 if (machineInventory == null) continue;
 
-                var items = machineInventory.GetInsideWorldObjects();
-                if (items == null || items.Count == 0) continue;
+                var rawItems = machineInventory.GetInsideWorldObjects();
+                if (rawItems == null || rawItems.Count == 0) continue;
 
-                // Snapshot items to avoid modification during enumeration
-                var machineItems = new List<WorldObject>(items);
+                // DECOUPLING STEP: Clone the elements into a localized list.
+                // This shields the iteration from dynamic runtime array reductions.
+                var itemsSnapshot = new List<WorldObject>(rawItems);
+                bool isCustomNetworkDrill = !string.IsNullOrEmpty(EpochDrillManager.GetBoundResourceId(wo.GetId())) || groupId == "Epoch_Node_Drill";
 
-                foreach (WorldObject item in machineItems)
+                foreach (WorldObject item in itemsSnapshot)
                 {
                     if (remainingBudget <= 0) break;
                     if (item == null || item.GetGroup() == null) continue;
 
                     string resourceId = item.GetGroup().GetId();
 
-                    // Check if this is a learned resource (already in Hub)
                     if (!_learnedResources.Contains(resourceId))
                         continue;
 
-                    // Check if the Hub has room for this resource
                     if (EpochHubLogistics.IsResourceSlotFull(resourceId))
                         continue;
 
                     try
                     {
-                        bool transferSuccess = false;
-                        InventoriesHandler.Instance.TransferItem(
-                            machineInventory,
-                            _hubInventory,
-                            item,
-                            delegate (bool success)
-                            {
-                                transferSuccess = success;
-                            }
-                        );
+                        // Check if the item is still physically present inside the container before processing
+                        if (!machineInventory.ContainWorldObject(item))
+                            continue;
 
-                        if (transferSuccess)
+                        if (isCustomNetworkDrill)
                         {
-                            totalCollected++;
-                            remainingBudget--;
-                            budgetUsed++;
-                            Plugin.Logger?.LogDebug($"[Epoch Hub] Collected {resourceId} from {groupId}");
+                            machineInventory.RemoveItem(item);
+                            if (_hubInventory.AddItem(item))
+                            {
+                                totalCollected++;
+                                remainingBudget--;
+                                budgetUsed++;
+                                Plugin.Logger?.LogDebug($"[Epoch Hub] Direct siphon finalized: moved {resourceId} from extractor node.");
+                            }
                         }
                         else
                         {
-                            // Fallback: manual transfer if TransferItem fails
-                            if (machineInventory.ContainWorldObject(item))
-                            {
-                                machineInventory.RemoveItem(item);
-                                if (_hubInventory.AddItem(item))
+                            bool transferSuccess = false;
+                            InventoriesHandler.Instance.TransferItem(
+                                machineInventory,
+                                _hubInventory,
+                                item,
+                                delegate (bool success)
                                 {
-                                    totalCollected++;
-                                    remainingBudget--;
-                                    budgetUsed++;
-                                    Plugin.Logger?.LogDebug($"[Epoch Hub] Manual collected {resourceId} from {groupId}");
+                                    transferSuccess = success;
                                 }
+                            );
+
+                            if (transferSuccess)
+                            {
+                                totalCollected++;
+                                remainingBudget--;
+                                budgetUsed++;
+                                Plugin.Logger?.LogDebug($"[Epoch Hub] Collected {resourceId} from {groupId}");
                             }
                         }
-
-                        EpochHubLogistics.RefreshCompressedStacks();
                     }
                     catch (Exception ex)
                     {
@@ -502,6 +484,7 @@ namespace EpochNeural
 
             return totalCollected;
         }
+
 
         // ============================================================
         // SUPPLY ENGINE - ALL MACHINES
@@ -929,7 +912,15 @@ namespace EpochNeural
         internal static bool HudVisible() { return _initialized; }
         internal static bool IsInitialized() { return _initialized; }
 
+        // NEW PUBLIC INTERFACE HELPER LINKING TO INTERNAL SMART MEMORY GRID
+        public static bool IsResourceLearned(string groupId)
+        {
+            if (string.IsNullOrEmpty(groupId)) return false;
+            return _learnedResources.Contains(groupId);
+        }
+
         internal static string GetStatus()
+
         {
             if (!_initialized) return "Offline";
             return $"Known: {_learnedResources.Count} | Collected: {_totalVacuumed} | Next Scan: {Mathf.Max(0f, _nextScanTime - Time.time):F0}s";

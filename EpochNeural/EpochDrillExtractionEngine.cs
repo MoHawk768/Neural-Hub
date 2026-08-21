@@ -1,5 +1,7 @@
-﻿using System;
+﻿using HarmonyLib;
 using SpaceCraft;
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace EpochNeural
@@ -8,8 +10,8 @@ namespace EpochNeural
     {
         private static EpochDrillExtractionEngine _instance;
         private float _nextExtractionTickTime;
-        private const float EXTRACTION_INTERVAL = 70f;
-        private const int ORES_PER_PULSE = 1;
+        private const float EXTRACTION_INTERVAL = 22f;
+        private const int ORES_PER_PULSE = 5;
 
         public static void InitializeEngine(GameObject persistentContainer)
         {
@@ -48,16 +50,14 @@ namespace EpochNeural
 
         private static void ExecuteNetworkExtractionPulse()
         {
-            var worldObjectsList =
-                WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
-            var hubInventory = EpochNeural.EpochHubInventory;
+            var worldObjectsList = WorldObjectsHandler.Instance?.GetConstructedWorldObjects();
 
-            if (worldObjectsList == null || hubInventory == null)
+            if (worldObjectsList == null)
             {
-                Plugin.Logger?.LogDebug(
-                    "[Epoch Extraction] No hub or world objects found.");
+                Plugin.Logger?.LogDebug("[Epoch Extraction] No world objects found.");
                 return;
             }
+
 
             bool generatedAnything = false;
 
@@ -114,24 +114,31 @@ namespace EpochNeural
 
                     int extractedCount = 0;
 
-                    for (int i = 0; i < ORES_PER_PULSE; i++)
+                    // PROGRESSION RULE DETECTOR: The drill deposits items into its local box as long as the resource identity exists in the Hub's learned registry.
+                    if (EpochVacuumSystem.IsInitialized() && EpochVacuumSystem.IsResourceLearned(targetOreId))
                     {
-                        if (EpochHubLogistics.IsResourceSlotFull(targetOreId) ||
-                            extractorInventory.IsFull())
-                            break;
+                        for (int i = 0; i < ORES_PER_PULSE; i++)
+                        {
+                            if (extractorInventory.IsFull())
+                                break;
 
-                        WorldObject newOre =
-                            WorldObjectsHandler.Instance.CreateNewWorldObject(oreGroup);
-
-                        if (newOre == null)
-                            break;
-
-                        InventoriesHandler.Instance.AddWorldObjectToInventory(
-                            newOre,
-                            extractorInventory);
-
-                        extractedCount++;
+                            // AUTHORITATIVE DATABASE INTERLOCK
+                            // Instantiates a tracking ID, registers it in the master ledger, and drops it cleanly into the machine's grid array
+                            InventoriesHandler.Instance.AddItemToInventory(oreGroup, extractorInventory, (success, newObjectId) =>
+                            {
+                                if (success)
+                                {
+                                    extractedCount++;
+                                }
+                            });
+                        }
                     }
+
+                    else
+                    {
+                        Plugin.Logger?.LogDebug($"[Epoch Extraction] Skipping drill pulse for {targetOreId} - resource has not been introduced/learned by the hub grid yet.");
+                    }
+
 
                     if (extractedCount > 0)
                     {
@@ -164,6 +171,35 @@ namespace EpochNeural
         {
             _instance = null;
             Plugin.Logger?.LogInfo("[Epoch Extraction] Engine destroyed.");
+        }
+    }
+
+    // ============================================================
+    // SEPARATE EXTRACTOR SEPARATION ENGINE
+    // Wipes native production templates during initialization so vanilla drops generation
+    // ============================================================
+    [HarmonyPatch(typeof(MachineGenerator), "SetMiningRayGeneration")]
+    internal static class EpochDisableVanillaDrillGenerationPatch
+    {
+        [HarmonyPostfix]
+        private static void Postfix(MachineGenerator __instance)
+        {
+            if (__instance == null) return;
+
+            var worldObjectAssociated = __instance.GetComponent<WorldObjectAssociated>();
+            if (worldObjectAssociated != null)
+            {
+                WorldObject wo = worldObjectAssociated.GetWorldObject();
+                if (wo != null && wo.GetGroup()?.GetId() == "Epoch_Node_Drill")
+                {
+                    // Wipe out vanilla's allowed list and data templates for this specific object.
+                    // With zero production definitions, the vanilla ticking loop handles zero items.
+                    __instance.oreAllowedToMine = new List<DataConfig.OreVeinIdentifer>();
+                    __instance.groupDatas = new List<GroupData>();
+
+                    Plugin.Logger?.LogInfo($"[Epoch Kill Vanilla] Native production template silenced safely for drill ID: {wo.GetId()}");
+                }
+            }
         }
     }
 }
