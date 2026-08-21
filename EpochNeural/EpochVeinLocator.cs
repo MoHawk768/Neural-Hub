@@ -123,12 +123,36 @@ namespace EpochNeural
 
                 _playerPosition = player.transform.position;
 
+                // NEW: Read the active ghost structure ID directly from the player builder's scene state reflection
+                bool isTryingToBuildDrill = false;
+                var playerBuilder = player.GetComponent<PlayerBuilder>();
+                if (playerBuilder != null)
+                {
+                    // Look up the field containing the ghost construction asset ID
+                    var ghostField = typeof(PlayerBuilder).GetField("ghostGroup", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                                   ?? typeof(PlayerBuilder).GetField("_ghostGroup", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                    if (ghostField != null)
+                    {
+                        Group ghostGroup = ghostField.GetValue(playerBuilder) as Group;
+                        if (ghostGroup != null && ghostGroup.GetId() == DRILL_GROUP_ID)
+                        {
+                            isTryingToBuildDrill = true;
+                        }
+                    }
+                }
+
+                if (!isTryingToBuildDrill)
+                {
+                    Deactivate();
+                    return;
+                }
+
                 if (Time.time >= _nextScanTime)
                 {
                     _nextScanTime = Time.time + SCAN_INTERVAL;
                     ScanNearestVein(_playerPosition);
                 }
-
                 if (_nearestVein == null ||
                     _nearestDistance > DISPLAY_RANGE)
                 {

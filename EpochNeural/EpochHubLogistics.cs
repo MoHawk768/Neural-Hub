@@ -21,9 +21,10 @@ namespace EpochNeural
 
         private static FieldInfo _inventoryDisplayerInventoryField;
         private static MethodInfo _inventoryDisplayerTrueRefreshContentMethod;
-        private static bool _hasPerformedCleanup = false;
+        public static bool _hasPerformedCleanup = false;
 
         // Tracks the stack-cap version currently represented by the Hub UI.
+
         internal static int _lastUiStackCap = -1;
         private static bool _uiRefreshInProgress = false;
 
@@ -147,7 +148,8 @@ namespace EpochNeural
 
         internal static void CleanupOverflowItems()
         {
-            if (_hasPerformedCleanup) return;
+            // if (_hasPerformedCleanup) return;
+
             if (EpochNeural.EpochHubInventory == null) return;
 
             int stackCap = GetCurrentStackCap();
@@ -288,7 +290,11 @@ namespace EpochNeural
 
             // Refresh the stacks after cleanup
             RefreshCompressedStacks();
+
+            // NEW: Instantly force the open UI window text numbers to redraw themselves
+            RefreshHubVisualImmediately();
         }
+
 
         // ============================================================
         // STACK BUILDING
@@ -690,6 +696,8 @@ namespace EpochNeural
                 {
                     _label.gameObject.SetActive(true);
                     _label.fontSize = (_currentDisplayedCount >= 100) ? 13f : 15f;
+                    _label.text = string.Empty;
+                    Canvas.ForceUpdateCanvases();
                     _label.text = $"{_currentDisplayedCount}";
                     _label.transform.SetAsLastSibling();
                 }

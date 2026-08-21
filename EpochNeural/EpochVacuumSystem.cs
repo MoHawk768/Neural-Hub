@@ -386,11 +386,12 @@ namespace EpochNeural
 
                 string groupId = wo.GetGroup().GetId();
 
-                // Skip Epoch Hub and Epoch Node Drills (they're handled separately)
-                if (groupId == EpochNeural.HubId || groupId == EpochDrillAsset.DrillId)
+                // Skip siphoning the Hub itself so it doesn't process its own inventory
+                if (groupId == EpochNeural.HubId)
                     continue;
 
                 // Skip vanilla Ore Extractors (they're hidden anyway)
+
                 if (groupId.Contains("OreExtractor"))
                     continue;
 
@@ -890,8 +891,10 @@ namespace EpochNeural
                     objects.RemoveAt(i);
                     collected++;
 
+                    // NEW: Force an instant stack recount right after adding the item
                     EpochHubLogistics.RefreshCompressedStacks();
 
+                    // Instantly break out of the loop if this item type hit the cap mid-pulse
                     if (EpochHubLogistics.IsResourceSlotFull(resourceId)) break;
                 }
                 catch (Exception ex)
@@ -899,6 +902,7 @@ namespace EpochNeural
                     Plugin.Logger.LogWarning($"[Epoch Hub] Failed to collect {resourceId}: {ex.Message}");
                 }
             }
+
 
             return collected;
         }
