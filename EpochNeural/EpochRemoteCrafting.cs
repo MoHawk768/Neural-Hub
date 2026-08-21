@@ -376,12 +376,11 @@ namespace EpochNeural
                     var backpackItems = backpack.GetInsideWorldObjects();
                     for (int i = backpackItems.Count - 1; i >= 0; i--)
                     {
-                        if (backpackItems[i]?.GetGroup()?.GetId() == reqId)
+                        WorldObject wo = backpackItems[i];
+                        if (wo != null && wo.GetGroup()?.GetId() == reqId)
                         {
-                            WorldObject wo = backpackItems[i];
-
-                            // NEW: Never consume a constructed structure or active machine!
-                            if (wo != null && wo.GetLinkedInventoryId() > 0) continue;
+                            // MANDATORY FIX: Skip any object if it is a constructed structure type (CraftStation, Drill, etc.)
+                            if (wo.GetGroup() is GroupItem || wo.GetLinkedInventoryId() > 0) continue;
 
                             backpack.RemoveItem(wo);
                             WorldObjectsHandler.Instance.DestroyWorldObject(wo, true);
@@ -399,12 +398,11 @@ namespace EpochNeural
                     var hubItems = hub.GetInsideWorldObjects();
                     for (int i = hubItems.Count - 1; i >= 0; i--)
                     {
-                        if (hubItems[i]?.GetGroup()?.GetId() == reqId && !hubItems[i].GetIsLockedInInventory())
+                        WorldObject wo = hubItems[i];
+                        if (wo != null && wo.GetGroup()?.GetId() == reqId && !wo.GetIsLockedInInventory())
                         {
-                            WorldObject wo = hubItems[i];
-
-                            // NEW: Never consume a constructed structure or active machine!
-                            if (wo != null && wo.GetLinkedInventoryId() > 0) continue;
+                            // MANDATORY FIX: Skip any object if it is a constructed structure type (CraftStation, Drill, etc.)
+                            if (wo.GetGroup() is GroupItem || wo.GetLinkedInventoryId() > 0) continue;
 
                             hub.RemoveItem(wo);
                             WorldObjectsHandler.Instance.DestroyWorldObject(wo, true);
@@ -412,9 +410,9 @@ namespace EpochNeural
                         }
                     }
                 }
-
-                EpochHubLogistics.RefreshCompressedStacks();
             }
+
+            EpochHubLogistics.RefreshCompressedStacks();
         }
 
         private static void ShowMessage(string message)
@@ -525,29 +523,4 @@ namespace EpochNeural
             }
         }
     }
-
-    // ============================================================
-    // GLOBAL STRUCTURE DESTRUCTION SAFEGUARD
-    // Intercepts the engine's object destroyer to prevent machines
-    // from being deleted as recipe ingredients.
-    // ============================================================
-    [HarmonyPatch(typeof(WorldObjectsHandler), nameof(WorldObjectsHandler.DestroyWorldObject), new Type[] { typeof(WorldObject), typeof(bool) })]
-    internal static class EpochStructureDestructionShieldPatch
-    {
-        [HarmonyPrefix]
-        private static bool Prefix(WorldObject worldObject)
-        {
-            if (worldObject != null)
-            {
-                // Match the true engine variable link to prevent accidental removal
-                if (worldObject.GetLinkedInventoryId() > 0)
-                {
-                    Plugin.Logger?.LogWarning($"[Epoch Shield] BLOCKED destruction of active machine structure: {worldObject.GetGroup()?.GetId()} (ID: worldObject.GetId())");
-                    return false; // Stop engine destruction pass
-                }
-            }
-            return true; // Let standard resource ingredients process normally
-        }
-    }
 }
-
